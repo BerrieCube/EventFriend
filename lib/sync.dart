@@ -143,6 +143,25 @@ class SyncService extends ChangeNotifier {
           } catch (_) {}
         }
       }
+      if (kind == 'doc') {
+        final path = '$uid/$id';
+        final isLink = data != null && data['type'] == 'link';
+        if (data != null && !isLink) {
+          final bytes = store.docBytes(id);
+          if (bytes != null) {
+            await _db.storage.from('files').uploadBinary(path, bytes,
+                fileOptions: FileOptions(
+                    upsert: true,
+                    contentType: (data['mime'] as String?)?.isNotEmpty == true
+                        ? data['mime'] as String
+                        : 'application/octet-stream'));
+          }
+        } else if (data == null) {
+          try {
+            await _db.storage.from('files').remove([path]);
+          } catch (_) {}
+        }
+      }
       await _db.from('records').upsert({
         'kind': kind,
         'id': id,
@@ -185,6 +204,16 @@ class SyncService extends ChangeNotifier {
           bytes = await _db.storage.from('photos').download('$uid/$id.jpg');
         } catch (_) {
           continue; // foto nog niet beschikbaar; volgende keer opnieuw
+        }
+      }
+      if (kind == 'doc' &&
+          data != null &&
+          data['type'] != 'link' &&
+          store.docBytes(id) == null) {
+        try {
+          bytes = await _db.storage.from('files').download('$uid/$id');
+        } catch (_) {
+          continue;
         }
       }
       await store.applyRemote(kind, id, data, bytes: bytes);

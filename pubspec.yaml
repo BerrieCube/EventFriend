@@ -17,6 +17,14 @@ dependencies:
   image_picker: ^1.1.2
   url_launcher: ^6.3.1
   supabase_flutter: ^2.18.3
+  wakelock_plus: ^1.8.2
+  file_picker: ^13.3.3
+  share_plus: ^13.3.1
+  open_filex: ^5.0.0
+  path_provider: ^2.1.6
+  flutter_local_notifications: ^23.0.1
+  home_widget: ^0.10.0
+  web: ^1.1.2
 
 dev_dependencies:
   flutter_test:

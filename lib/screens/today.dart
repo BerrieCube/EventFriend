@@ -47,7 +47,6 @@ class _TodayScreenState extends State<TodayScreen> {
         final today = store.jobsOn(now);
         final upcoming =
             store.jobs.where((j) => j.start.isAfter(now)).take(3).toList();
-        final running = store.running;
         return RefreshIndicator(
           onRefresh: () async {
             await sync.run();
@@ -82,7 +81,6 @@ class _TodayScreenState extends State<TodayScreen> {
                 _TodayJob(job: j),
                 const SizedBox(height: 12),
               ],
-              _ClockCard(running: running, todayJob: today.firstOrNull),
               if (upcoming.isNotEmpty) ...[
                 SectionTitle('Binnenkort',
                     trailing: TextButton(
@@ -189,7 +187,7 @@ class _TodayJob extends StatelessWidget {
             child: _BigButton(
                 icon: Icons.navigation_outlined,
                 label: 'Route',
-                onTap: () => openRoute(job.location)),
+                onTap: () => openRoute(context, job.location)),
           ),
         if (job.location.isNotEmpty && phones.isNotEmpty)
           const SizedBox(width: 8),
@@ -227,52 +225,4 @@ class _BigButton extends StatelessWidget {
           ),
         ),
       );
-}
-
-class _ClockCard extends StatelessWidget {
-  final TimeEntry? running;
-  final Job? todayJob;
-  const _ClockCard({required this.running, required this.todayJob});
-
-  @override
-  Widget build(BuildContext context) {
-    final r = running;
-    if (r == null) {
-      return SizedBox(
-        height: 56,
-        child: FilledButton.icon(
-          onPressed: () => store.clockIn(job: todayJob),
-          icon: const Icon(Icons.login),
-          label: const Text('Inklokken',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-        ),
-      );
-    }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(
-              'Ingeklokt om ${hm(r.start)}${r.jobTitle.isEmpty ? '' : ' · ${r.jobTitle}'}',
-              style: const TextStyle(color: muted)),
-          const SizedBox(height: 4),
-          Text(duration(r.worked),
-              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 52,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFE24B4A),
-                  foregroundColor: Colors.white),
-              onPressed: store.clockOut,
-              icon: const Icon(Icons.logout),
-              label: const Text('Uitklokken',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
 }

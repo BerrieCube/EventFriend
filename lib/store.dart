@@ -104,6 +104,8 @@ class Note {
   String? jobTitle;
   DateTime created;
   DateTime updated;
+  bool lockscreen; // tonen als vaste melding op het vergrendelscherm
+  bool widget; // tonen in de notitie-widget op het startscherm
 
   Note(
       {required this.id,
@@ -111,7 +113,9 @@ class Note {
       this.jobKey,
       this.jobTitle,
       required this.created,
-      required this.updated});
+      required this.updated,
+      this.lockscreen = false,
+      this.widget = false});
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -120,6 +124,8 @@ class Note {
         'jobTitle': jobTitle,
         'created': created.toIso8601String(),
         'updated': updated.toIso8601String(),
+        'lockscreen': lockscreen,
+        'widget': widget,
       };
 
   factory Note.fromMap(Map<String, dynamic> m) => Note(
@@ -129,6 +135,8 @@ class Note {
         jobTitle: m['jobTitle'],
         created: DateTime.parse(m['created']),
         updated: DateTime.parse(m['updated']),
+        lockscreen: m['lockscreen'] == true,
+        widget: m['widget'] == true,
       );
 }
 
@@ -214,8 +222,82 @@ class TimeEntry {
       );
 }
 
+class Doc {
+  final String id;
+  String type; // 'file' of 'link'
+  String name;
+  String? url; // bij links
+  String mime;
+  int size;
+  String? jobKey; // null = bibliotheek (Tools)
+  DateTime created;
+  DateTime? deleteAfter; // callsheets: 30 dagen na de klus
+  Uint8List? bytes;
+
+  Doc(
+      {required this.id,
+      required this.type,
+      required this.name,
+      this.url,
+      this.mime = '',
+      this.size = 0,
+      this.jobKey,
+      required this.created,
+      this.deleteAfter,
+      this.bytes});
+
+  bool get isLink => type == 'link';
+  bool get isPdf =>
+      mime == 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'type': type,
+        'name': name,
+        'url': url,
+        'mime': mime,
+        'size': size,
+        'jobKey': jobKey,
+        'created': created.toIso8601String(),
+        'deleteAfter': deleteAfter?.toIso8601String(),
+        'bytes': bytes,
+      };
+
+  factory Doc.fromMap(Map<String, dynamic> m) => Doc(
+        id: m['id'],
+        type: m['type'] ?? 'file',
+        name: m['name'] ?? '',
+        url: m['url'],
+        mime: m['mime'] ?? '',
+        size: (m['size'] ?? 0) as int,
+        jobKey: m['jobKey'],
+        created: DateTime.parse(m['created']),
+        deleteAfter:
+            m['deleteAfter'] == null ? null : DateTime.parse(m['deleteAfter']),
+        bytes: m['bytes'] as Uint8List?,
+      );
+}
+
+/// Bewaartermijn van callsheets na afloop van de klus.
+const docRetention = Duration(days: 30);
+
+String mimeFor(String name) {
+  final n = name.toLowerCase();
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+  if (n.endsWith('.png')) return 'image/png';
+  if (n.endsWith('.docx')) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (n.endsWith('.xlsx')) {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (n.endsWith('.txt')) return 'text/plain';
+  return 'application/octet-stream';
+}
+
 class Store extends ChangeNotifier {
-  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync;
+  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync, _docs;
 
   /// Wordt aangeroepen na elke lokale wijziging (voor automatisch synchroniseren).
   VoidCallback? onLocalChange;
@@ -233,6 +315,7 @@ class Store extends ChangeNotifier {
     _hours = await Hive.openBox('hours');
     _calc = await Hive.openBox('calc');
     _sync = await Hive.openBox('sync');
+    _docs = await Hive.openBox('docs');
   }
 
   // ---------- Laatst gebruikte invoer van calculators ----------
@@ -393,6 +476,60 @@ class Store extends ChangeNotifier {
 
   Future<void> deletePhoto(String id) => _del('photo', id);
 
+  // ---------- Documenten en links ----------
+  List<Doc> get _allDocs => _docs.values.map((v) => Doc.fromMap(_m(v))).toList();
+
+  List<Doc> docsFor(String jobKey) =>
+      _allDocs.where((d) => d.jobKey == jobKey).toList()
+        ..sort((a, b) => a.created.compareTo(b.created));
+
+  List<Doc> get libraryDocs => _allDocs.where((d) => d.jobKey == null).toList()
+    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+  Uint8List? docBytes(String id) {
+    final v = _docs.get(id);
+    return v == null ? null : _m(v)['bytes'] as Uint8List?;
+  }
+
+  Future<void> addFile(String name, Uint8List bytes, {Job? job}) async {
+    final d = Doc(
+      id: newId(),
+      type: 'file',
+      name: name,
+      mime: mimeFor(name),
+      size: bytes.length,
+      jobKey: job?.key,
+      created: DateTime.now(),
+      deleteAfter: job == null ? null : job.end.add(docRetention),
+      bytes: bytes,
+    );
+    await _put('doc', d.id, d.toMap());
+  }
+
+  Future<void> addLink(String name, String url) async {
+    var u = url.trim();
+    if (!u.contains('://')) u = 'https://$u';
+    final d = Doc(
+        id: newId(), type: 'link', name: name, url: u, created: DateTime.now());
+    await _put('doc', d.id, d.toMap());
+  }
+
+  Future<void> saveDoc(Doc d) => _put('doc', d.id, d.toMap());
+
+  Future<void> deleteDoc(String id) => _del('doc', id);
+
+  /// Callsheets 30 dagen na de klus automatisch verwijderen.
+  Future<int> cleanupExpiredDocs() async {
+    final now = DateTime.now();
+    final expired = _allDocs
+        .where((d) => d.deleteAfter != null && d.deleteAfter!.isBefore(now))
+        .toList();
+    for (final d in expired) {
+      await _del('doc', d.id);
+    }
+    return expired.length;
+  }
+
   // ---------- Uren ----------
   List<TimeEntry> get hours =>
       _hours.values.map((v) => TimeEntry.fromMap(_m(v))).toList()
@@ -427,13 +564,14 @@ class Store extends ChangeNotifier {
   Future<void> deleteEntry(String id) => _del('hours', id);
 
   // ---------- Synchronisatie (gebruikt door sync.dart) ----------
-  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours'];
+  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours', 'doc'];
 
   Box _box(String kind) => switch (kind) {
         'calendar' => _cals,
         'job' => _jobs,
         'note' => _notes,
         'photo' => _photos,
+        'doc' => _docs,
         _ => _hours,
       };
 
@@ -462,7 +600,7 @@ class Store extends ChangeNotifier {
     final v = _box(kind).get(id);
     if (v == null) return null;
     final m = _m(v);
-    if (kind == 'photo') m.remove('bytes');
+    if (kind == 'photo' || kind == 'doc') m.remove('bytes');
     if (kind == 'calendar') {
       m.remove('lastSync');
       m.remove('error');
@@ -509,6 +647,11 @@ class Store extends ChangeNotifier {
     }
     if (kind == 'photo') {
       final b = bytes ?? photoBytes(id);
+      if (b == null) return;
+      m['bytes'] = b;
+    }
+    if (kind == 'doc' && m['type'] != 'link') {
+      final b = bytes ?? docBytes(id);
       if (b == null) return;
       m['bytes'] = b;
     }

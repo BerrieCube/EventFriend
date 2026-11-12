@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_next_job_desc">Je volgende klus met tijd en locatie</string>
+    <string name="widget_note_desc">Een notitie die je zelf kiest</string>
+</resources>

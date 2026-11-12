@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../device.dart';
 import '../format.dart';
 import '../store.dart';
 import 'common.dart';
@@ -23,6 +24,8 @@ class _NoteEditor extends StatefulWidget {
 class _NoteEditorState extends State<_NoteEditor> {
   late final _text = TextEditingController(text: widget.note?.text ?? '');
   late String? _jobKey = widget.note?.jobKey ?? widget.job?.key;
+  late bool _lock = widget.note?.lockscreen ?? false;
+  late bool _widget = widget.note?.widget ?? false;
 
   Future<void> _save() async {
     final t = _text.text.trim();
@@ -36,6 +39,15 @@ class _NoteEditorState extends State<_NoteEditor> {
     n.text = t;
     n.jobKey = _jobKey;
     n.jobTitle = store.job(_jobKey)?.title;
+    n.lockscreen = _lock;
+    if (_widget && !n.widget) {
+      // Maar één notitie tegelijk op de widget.
+      for (final o in store.notes.where((o) => o.widget && o.id != n.id)) {
+        o.widget = false;
+        await store.saveNote(o);
+      }
+    }
+    n.widget = _widget;
     await store.saveNote(n);
     if (mounted) Navigator.pop(context);
   }
@@ -99,6 +111,34 @@ class _NoteEditorState extends State<_NoteEditor> {
               ],
               onChanged: (v) => setState(() => _jobKey = v),
             ),
+            if (device.supported) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Op vergrendelscherm'),
+                subtitle: const Text('Als vaste melding, tot je hem uitzet'),
+                value: _lock,
+                onChanged: (v) async {
+                  if (v && !await device.requestPermission()) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                              'Sta meldingen voor EventFriend toe in de Android-instellingen.')));
+                    }
+                    return;
+                  }
+                  setState(() => _lock = v);
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Op widget'),
+                subtitle: const Text('Toont deze notitie in de notitie-widget'),
+                value: _widget,
+                onChanged: (v) => setState(() => _widget = v),
+              ),
+            ],
             const SizedBox(height: 12),
             Expanded(
               child: TextField(
@@ -167,6 +207,10 @@ class _NotesScreenState extends State<NotesScreen> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Card(
                   child: ListTile(
+                    leading: n.lockscreen || n.widget
+                        ? Icon(n.lockscreen ? Icons.lock_outline : Icons.widgets_outlined,
+                            size: 18, color: Theme.of(context).colorScheme.primary)
+                        : null,
                     title: Text(n.text,
                         maxLines: 3, overflow: TextOverflow.ellipsis),
                     subtitle: Text([

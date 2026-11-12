@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'screens/hours.dart';
@@ -6,6 +8,7 @@ import 'screens/notes.dart';
 import 'screens/today.dart';
 import 'screens/tools.dart';
 import 'store.dart';
+import 'device.dart';
 import 'sync.dart';
 
 const amber = Color(0xFFEF9F27);
@@ -16,9 +19,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await store.init();
   await sync.init();
+  unawaited(device.init());
   runApp(const EventFriendApp());
   // Op de achtergrond: gegevens synchroniseren en agenda's verversen.
-  sync.run().whenComplete(store.syncAll);
+  sync.run().whenComplete(() async {
+    await store.cleanupExpiredDocs();
+    await store.syncAll();
+  });
 }
 
 class EventFriendApp extends StatelessWidget {

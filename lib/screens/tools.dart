@@ -4,7 +4,9 @@ import '../calc/calc.dart';
 import '../calc/defs.dart';
 import '../format.dart';
 import '../store.dart';
+import 'clock.dart';
 import 'common.dart';
+import 'docs.dart';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -17,6 +19,26 @@ class ToolsScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
           const Text('Werkt volledig offline.', style: TextStyle(color: muted)),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: _BigTile(
+                icon: Icons.access_time,
+                label: 'Klok',
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const ClockScreen())),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _BigTile(
+                icon: Icons.folder_open,
+                label: 'Documenten & links',
+                onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LibraryScreen())),
+              ),
+            ),
+          ]),
           for (final cat in categoryOrder) ...[
             SectionTitle(cat),
             for (final c in calculators.where((c) => c.category == cat))
@@ -38,6 +60,31 @@ class ToolsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BigTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _BigTile({required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
+            child: Column(children: [
+              Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(height: 6),
+              Text(label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      );
 }
 
 class CalcScreen extends StatefulWidget {

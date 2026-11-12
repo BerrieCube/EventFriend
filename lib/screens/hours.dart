@@ -1,11 +1,35 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../store.dart';
 import 'common.dart';
 
-class HoursScreen extends StatelessWidget {
+class HoursScreen extends StatefulWidget {
   const HoursScreen({super.key});
+
+  @override
+  State<HoursScreen> createState() => _HoursScreenState();
+}
+
+class _HoursScreenState extends State<HoursScreen> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Lopende werktijd elke 30 s bijwerken.
+    _tick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,14 +42,9 @@ class HoursScreen extends StatelessWidget {
       ),
       body: StoreBuilder(builder: (context) {
         final entries = store.hours;
-        if (entries.isEmpty) {
-          return const Center(
-            child: EmptyHint(
-                icon: Icons.schedule,
-                title: 'Nog geen uren',
-                body: 'Klok in op het Vandaag-scherm of voeg uren toe met de +.'),
-          );
-        }
+        final clock = ClockCard(
+            running: store.running,
+            todayJob: store.jobsOn(DateTime.now()).firstOrNull);
         // Groeperen per week (maandag als start).
         final weeks = <DateTime, List<TimeEntry>>{};
         for (final e in entries) {
@@ -35,6 +54,13 @@ class HoursScreen extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
           children: [
+            clock,
+            if (entries.isEmpty)
+              const EmptyHint(
+                  icon: Icons.schedule,
+                  title: 'Nog geen uren',
+                  body:
+                      'Klok in met de knop hierboven of voeg uren toe met de +.'),
             for (final w in keys) ...[
               _WeekHeader(start: w, entries: weeks[w]!),
               for (final e in weeks[w]!)
@@ -211,4 +237,52 @@ Future<void> editEntry(BuildContext context, {TimeEntry? entry}) async {
       );
     }),
   );
+}
+
+class ClockCard extends StatelessWidget {
+  final TimeEntry? running;
+  final Job? todayJob;
+  const ClockCard({required this.running, required this.todayJob});
+
+  @override
+  Widget build(BuildContext context) {
+    final r = running;
+    if (r == null) {
+      return SizedBox(
+        height: 56,
+        child: FilledButton.icon(
+          onPressed: () => store.clockIn(job: todayJob),
+          icon: const Icon(Icons.login),
+          label: const Text('Inklokken',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        ),
+      );
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text(
+              'Ingeklokt om ${hm(r.start)}${r.jobTitle.isEmpty ? '' : ' · ${r.jobTitle}'}',
+              style: const TextStyle(color: muted)),
+          const SizedBox(height: 4),
+          Text(duration(r.worked),
+              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 52,
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE24B4A),
+                  foregroundColor: Colors.white),
+              onPressed: store.clockOut,
+              icon: const Icon(Icons.logout),
+              label: const Text('Uitklokken',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
 }

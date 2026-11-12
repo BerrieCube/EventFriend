@@ -5,6 +5,7 @@ import '../format.dart';
 import '../pdf_export.dart';
 import '../store.dart';
 import 'common.dart';
+import 'docs.dart';
 import 'jobs.dart';
 import 'notes.dart';
 
@@ -43,6 +44,7 @@ class JobDetailScreen extends StatelessWidget {
       final cal = store.calendar(job.calId);
       final notes = store.notesFor(job.key);
       final photos = store.photosFor(job.key);
+      final docs = store.docsFor(job.key);
       final phones = job.phoneNumbers;
 
       return Scaffold(
@@ -100,7 +102,7 @@ class JobDetailScreen extends StatelessWidget {
                   ActionChip(
                       avatar: const Icon(Icons.navigation_outlined, size: 18),
                       label: Text(job.location),
-                      onPressed: () => openRoute(job.location)),
+                      onPressed: () => openRoute(context, job.location)),
                 for (final p in phones)
                   ActionChip(
                       avatar: const Icon(Icons.phone_outlined, size: 18),
@@ -117,6 +119,16 @@ class JobDetailScreen extends StatelessWidget {
                 ),
               ),
             ],
+            SectionTitle('Callsheet en documenten',
+                trailing: IconButton(
+                    tooltip: 'Document toevoegen',
+                    icon: const Icon(Icons.upload_file),
+                    onPressed: () => pickAndAddFile(context, job: job))),
+            if (docs.isEmpty)
+              Text(
+                  'Voeg de callsheet (PDF) toe. Hij wordt ${docRetention.inDays} dagen na de klus automatisch verwijderd.',
+                  style: const TextStyle(color: muted)),
+            for (final d in docs) DocTile(doc: d),
             SectionTitle('Notities',
                 trailing: IconButton(
                     tooltip: 'Notitie toevoegen',
@@ -183,11 +195,17 @@ class _PhotoView extends StatefulWidget {
 
 class _PhotoViewState extends State<_PhotoView> {
   late final _caption = TextEditingController(text: widget.photo.caption);
+  bool _deleted = false;
 
   @override
   void dispose() {
-    widget.photo.caption = _caption.text.trim();
-    store.savePhoto(widget.photo);
+    // Alleen opslaan als het bijschrift echt gewijzigd is en de foto niet verwijderd is.
+    final c = _caption.text.trim();
+    if (!_deleted && c != widget.photo.caption) {
+      widget.photo.caption = c;
+      store.savePhoto(widget.photo);
+    }
+    _caption.dispose();
     super.dispose();
   }
 
@@ -201,6 +219,7 @@ class _PhotoViewState extends State<_PhotoView> {
           onPressed: () async {
             if (await confirm(context, 'Foto verwijderen?',
                 'De foto wordt uit de app verwijderd.')) {
+              _deleted = true;
               await store.deletePhoto(widget.photo.id);
               if (context.mounted) Navigator.pop(context);
             }

@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../store.dart';
@@ -29,11 +31,50 @@ class StoreBuilder extends StatelessWidget {
       ListenableBuilder(listenable: store, builder: (c, _) => builder(c));
 }
 
-Future<void> openRoute(String location) => launchUrl(
-      Uri.parse(
-          'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(location)}'),
-      mode: LaunchMode.externalApplication,
-    );
+/// Laat kiezen met welke app je navigeert.
+Future<void> openRoute(BuildContext context, String location) async {
+  final q = Uri.encodeComponent(location);
+  final options = <(IconData, String, Uri)>[
+    (Icons.map_outlined, 'Google Maps',
+        Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$q')),
+    (Icons.navigation_outlined, 'Waze',
+        Uri.parse('https://waze.com/ul?q=$q&navigate=yes')),
+    if (!kIsWeb)
+      (Icons.apps, 'Andere app…', Uri.parse('geo:0,0?q=$q')),
+  ];
+  await showModalBottomSheet(
+    context: context,
+    showDragHandle: true,
+    builder: (c) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(location,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: muted)),
+        ),
+        for (final o in options)
+          ListTile(
+            leading: Icon(o.$1),
+            title: Text(o.$2),
+            onTap: () {
+              Navigator.pop(c);
+              launchUrl(o.$3, mode: LaunchMode.externalApplication);
+            },
+          ),
+        ListTile(
+          leading: const Icon(Icons.copy),
+          title: const Text('Adres kopiëren'),
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: location));
+            Navigator.pop(c);
+          },
+        ),
+        const SizedBox(height: 8),
+      ]),
+    ),
+  );
+}
 
 Future<void> callNumber(String number) =>
     launchUrl(Uri(scheme: 'tel', path: number));
