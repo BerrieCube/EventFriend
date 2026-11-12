@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../store.dart';
+import '../sync.dart';
 import 'calendars.dart';
 import 'common.dart';
 import 'job_detail.dart';
@@ -48,7 +49,10 @@ class _TodayScreenState extends State<TodayScreen> {
             store.jobs.where((j) => j.start.isAfter(now)).take(3).toList();
         final running = store.running;
         return RefreshIndicator(
-          onRefresh: store.syncAll,
+          onRefresh: () async {
+            await sync.run();
+            await store.syncAll();
+          },
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             children: [

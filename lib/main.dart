@@ -6,6 +6,7 @@ import 'screens/notes.dart';
 import 'screens/today.dart';
 import 'screens/tools.dart';
 import 'store.dart';
+import 'sync.dart';
 
 const amber = Color(0xFFEF9F27);
 const bg = Color(0xFF0F1012);
@@ -14,9 +15,10 @@ const card = Color(0xFF1B1C1F);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await store.init();
+  await sync.init();
   runApp(const EventFriendApp());
-  // Agenda's op de achtergrond verversen bij het opstarten.
-  store.syncAll();
+  // Op de achtergrond: gegevens synchroniseren en agenda's verversen.
+  sync.run().whenComplete(store.syncAll);
 }
 
 class EventFriendApp extends StatelessWidget {

@@ -215,7 +215,13 @@ class TimeEntry {
 }
 
 class Store extends ChangeNotifier {
-  late Box _cals, _jobs, _notes, _photos, _hours, _calc;
+  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync;
+
+  /// Wordt aangeroepen na elke lokale wijziging (voor automatisch synchroniseren).
+  VoidCallback? onLocalChange;
+
+  /// Haalt een agenda op via de server (webversie). Gezet door de sync-service.
+  Future<String> Function(String url)? remoteIcalFetch;
   bool syncing = false;
 
   Future<void> init() async {
@@ -226,6 +232,7 @@ class Store extends ChangeNotifier {
     _photos = await Hive.openBox('photos');
     _hours = await Hive.openBox('hours');
     _calc = await Hive.openBox('calc');
+    _sync = await Hive.openBox('sync');
   }
 
   // ---------- Laatst gebruikte invoer van calculators ----------
@@ -250,20 +257,18 @@ class Store extends ChangeNotifier {
   Future<CalendarSource> addCalendar(String name, String url) async {
     final c = CalendarSource(
         id: newId(), name: name, url: normalizeCalendarUrl(url));
-    await _cals.put(c.id, c.toMap());
-    notifyListeners();
+    await _put('calendar', c.id, c.toMap());
     await syncCalendar(c);
     return c;
   }
 
   Future<void> updateCalendar(CalendarSource c) async {
     c.url = normalizeCalendarUrl(c.url);
-    await _cals.put(c.id, c.toMap());
-    notifyListeners();
+    await _put('calendar', c.id, c.toMap());
   }
 
   Future<void> removeCalendar(String id) async {
-    await _cals.delete(id);
+    await _del('calendar', id);
     final keys = _jobs.keys
         .where((k) => _m(_jobs.get(k))['calId'] == id)
         .toList();
@@ -284,13 +289,22 @@ class Store extends ChangeNotifier {
 
   Future<void> syncCalendar(CalendarSource c, {bool notify = true}) async {
     try {
-      final res = await http
-          .get(Uri.parse(c.url))
-          .timeout(const Duration(seconds: 20));
-      if (res.statusCode != 200) {
-        throw Exception('Server gaf status ${res.statusCode}');
+      final String body;
+      if (kIsWeb) {
+        final f = remoteIcalFetch;
+        if (f == null) {
+          throw Exception('Log in (tandwiel → Account) om agenda\'s in de browser op te halen.');
+        }
+        body = await f(c.url).timeout(const Duration(seconds: 30));
+      } else {
+        final res = await http
+            .get(Uri.parse(c.url))
+            .timeout(const Duration(seconds: 20));
+        if (res.statusCode != 200) {
+          throw Exception('Server gaf status ${res.statusCode}');
+        }
+        body = res.body;
       }
-      final body = res.body;
       if (!body.contains('BEGIN:VCALENDAR')) {
         throw Exception('Dit lijkt geen iCal-agenda te zijn');
       }
@@ -316,10 +330,7 @@ class Store extends ChangeNotifier {
       c.lastSync = DateTime.now();
       c.error = null;
     } catch (e) {
-      c.error = kIsWeb
-          ? 'Ophalen lukt niet in de browser (de agenda-server blokkeert dit). '
-              'In de Android-app werkt het wel. ($e)'
-          : 'Ophalen mislukt: $e';
+      c.error = 'Ophalen mislukt: ${e.toString().replaceFirst('Exception: ', '')}';
     }
     await _cals.put(c.id, c.toMap());
     if (notify) notifyListeners();
@@ -342,15 +353,9 @@ class Store extends ChangeNotifier {
     return jobs.where((j) => j.start.isBefore(e) && j.end.isAfter(s)).toList();
   }
 
-  Future<void> saveManualJob(Job j) async {
-    await _jobs.put(j.key, j.toMap());
-    notifyListeners();
-  }
+  Future<void> saveManualJob(Job j) => _put('job', j.key, j.toMap());
 
-  Future<void> deleteJob(String key) async {
-    await _jobs.delete(key);
-    notifyListeners();
-  }
+  Future<void> deleteJob(String key) => _del('job', key);
 
   // ---------- Notities ----------
   List<Note> get notes => _notes.values.map((v) => Note.fromMap(_m(v))).toList()
@@ -362,14 +367,10 @@ class Store extends ChangeNotifier {
 
   Future<void> saveNote(Note n) async {
     n.updated = DateTime.now();
-    await _notes.put(n.id, n.toMap());
-    notifyListeners();
+    await _put('note', n.id, n.toMap());
   }
 
-  Future<void> deleteNote(String id) async {
-    await _notes.delete(id);
-    notifyListeners();
-  }
+  Future<void> deleteNote(String id) => _del('note', id);
 
   // ---------- Foto's ----------
   List<Photo> photosFor(String jobKey) => _photos.values
@@ -385,19 +386,12 @@ class Store extends ChangeNotifier {
         caption: '',
         created: DateTime.now(),
         bytes: bytes);
-    await _photos.put(p.id, p.toMap());
-    notifyListeners();
+    await _put('photo', p.id, p.toMap());
   }
 
-  Future<void> savePhoto(Photo p) async {
-    await _photos.put(p.id, p.toMap());
-    notifyListeners();
-  }
+  Future<void> savePhoto(Photo p) => _put('photo', p.id, p.toMap());
 
-  Future<void> deletePhoto(String id) async {
-    await _photos.delete(id);
-    notifyListeners();
-  }
+  Future<void> deletePhoto(String id) => _del('photo', id);
 
   // ---------- Uren ----------
   List<TimeEntry> get hours =>
@@ -418,27 +412,133 @@ class Store extends ChangeNotifier {
         start: DateTime.now(),
         jobKey: job?.key,
         jobTitle: job?.title ?? '');
-    await _hours.put(t.id, t.toMap());
-    notifyListeners();
+    await _put('hours', t.id, t.toMap());
   }
 
   Future<void> clockOut() async {
     final r = running;
     if (r == null) return;
     r.end = DateTime.now();
-    await _hours.put(r.id, r.toMap());
-    notifyListeners();
+    await _put('hours', r.id, r.toMap());
   }
 
-  Future<void> saveEntry(TimeEntry t) async {
-    await _hours.put(t.id, t.toMap());
+  Future<void> saveEntry(TimeEntry t) => _put('hours', t.id, t.toMap());
+
+  Future<void> deleteEntry(String id) => _del('hours', id);
+
+  // ---------- Synchronisatie (gebruikt door sync.dart) ----------
+  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours'];
+
+  Box _box(String kind) => switch (kind) {
+        'calendar' => _cals,
+        'job' => _jobs,
+        'note' => _notes,
+        'photo' => _photos,
+        _ => _hours,
+      };
+
+  /// Openstaande lokale wijzigingen: "kind|id" -> tijdstip van wijzigen.
+  Map<String, String> get dirty =>
+      Map<String, String>.from((_sync.get('dirty') ?? {}) as Map);
+
+  Future<void> _setDirty(Map<String, String> d) => _sync.put('dirty', d);
+
+  Future<void> _put(String kind, String id, Map<String, dynamic> m) async {
+    await _box(kind).put(id, m);
+    await _setDirty(dirty..['$kind|$id'] = DateTime.now().toUtc().toIso8601String());
     notifyListeners();
+    onLocalChange?.call();
   }
 
-  Future<void> deleteEntry(String id) async {
-    await _hours.delete(id);
+  Future<void> _del(String kind, String id) async {
+    await _box(kind).delete(id);
+    await _setDirty(dirty..['$kind|$id'] = DateTime.now().toUtc().toIso8601String());
     notifyListeners();
+    onLocalChange?.call();
   }
+
+  /// Lokale gegevens als record voor de server (null = verwijderd).
+  Map<String, dynamic>? localRecord(String kind, String id) {
+    final v = _box(kind).get(id);
+    if (v == null) return null;
+    final m = _m(v);
+    if (kind == 'photo') m.remove('bytes');
+    if (kind == 'calendar') {
+      m.remove('lastSync');
+      m.remove('error');
+    }
+    return m;
+  }
+
+  Uint8List? photoBytes(String id) {
+    final v = _photos.get(id);
+    return v == null ? null : _m(v)['bytes'] as Uint8List?;
+  }
+
+  bool hasLocal(String kind, String id) => _box(kind).containsKey(id);
+
+  Future<void> clearDirty(String key, String stamp) async {
+    final d = dirty;
+    if (d[key] == stamp) {
+      d.remove(key);
+      await _setDirty(d);
+    }
+  }
+
+  /// Wijziging van de server toepassen zonder hem opnieuw als "dirty" te markeren.
+  Future<void> applyRemote(String kind, String id, Map<String, dynamic>? data,
+      {Uint8List? bytes}) async {
+    final box = _box(kind);
+    if (data == null) {
+      await box.delete(id);
+      if (kind == 'calendar') {
+        final keys =
+            _jobs.keys.where((k) => _m(_jobs.get(k))['calId'] == id).toList();
+        await _jobs.deleteAll(keys);
+      }
+      return;
+    }
+    final m = Map<String, dynamic>.from(data);
+    if (kind == 'calendar') {
+      final old = box.get(id);
+      if (old != null) {
+        final o = _m(old);
+        m['lastSync'] = o['lastSync'];
+        m['error'] = o['error'];
+      }
+    }
+    if (kind == 'photo') {
+      final b = bytes ?? photoBytes(id);
+      if (b == null) return;
+      m['bytes'] = b;
+    }
+    await box.put(id, m);
+  }
+
+  /// Alle lokale gegevens markeren om te uploaden (bij eerste keer inloggen).
+  Future<void> markAllDirty() async {
+    final d = dirty;
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final k in kinds) {
+      for (final id in _box(k).keys) {
+        if (k == 'job' && !(id as String).startsWith('manual|')) continue;
+        d.putIfAbsent('$k|$id', () => now);
+      }
+    }
+    await _setDirty(d);
+  }
+
+  String? get lastPull => _sync.get('lastPull') as String?;
+  Future<void> setLastPull(String? v) => _sync.put('lastPull', v);
+  DateTime? get lastSyncTime {
+    final v = _sync.get('lastSyncTime') as String?;
+    return v == null ? null : DateTime.parse(v);
+  }
+
+  Future<void> setLastSyncTime(DateTime t) =>
+      _sync.put('lastSyncTime', t.toIso8601String());
+
+  void refresh() => notifyListeners();
 }
 
 final store = Store();

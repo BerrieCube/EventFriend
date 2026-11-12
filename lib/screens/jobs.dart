@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../store.dart';
+import '../sync.dart';
 import 'calendars.dart';
 import 'common.dart';
 import 'job_detail.dart';
@@ -58,7 +59,10 @@ class _JobList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: store.syncAll,
+      onRefresh: () async {
+            await sync.run();
+            await store.syncAll();
+          },
       child: jobs.isEmpty
           ? ListView(children: [
               EmptyHint(

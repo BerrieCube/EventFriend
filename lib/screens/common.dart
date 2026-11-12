@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../store.dart';
-import 'calendars.dart';
+import 'settings.dart';
 
 const muted = Color(0xFF8A8984);
 
@@ -12,10 +12,10 @@ class SettingsAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IconButton(
-        tooltip: 'Agenda\'s',
+        tooltip: 'Instellingen',
         icon: const Icon(Icons.settings_outlined),
         onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const CalendarsScreen())),
+            MaterialPageRoute(builder: (_) => const SettingsScreen())),
       );
 }
 
