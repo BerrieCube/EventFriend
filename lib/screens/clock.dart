@@ -52,14 +52,28 @@ class _ClockScreenState extends State<ClockScreen> {
               padding: const EdgeInsets.all(12),
               child: FittedBox(
                 fit: BoxFit.contain,
-                child: Text(
-                  text,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 200,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      dateLong(_now),
+                      style: const TextStyle(
+                        color: Color(0xFF6E6D68),
+                        fontSize: 26,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    Text(
+                      text,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 200,
+                        fontWeight: FontWeight.w600,
+                        height: 1.05,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

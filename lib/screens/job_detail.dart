@@ -128,7 +128,7 @@ class JobDetailScreen extends StatelessWidget {
               Text(
                   'Voeg de callsheet (PDF) toe. Hij wordt ${docRetention.inDays} dagen na de klus automatisch verwijderd.',
                   style: const TextStyle(color: muted)),
-            for (final d in docs) DocTile(doc: d),
+            for (final d in docs) DocTile(doc: d, siblings: docs),
             SectionTitle('Notities',
                 trailing: IconButton(
                     tooltip: 'Notitie toevoegen',

@@ -3,7 +3,7 @@
 // ook zonder internet werkt. Online haalt hij altijd eerst de nieuwste versie.
 'use strict';
 
-const CACHE = 'eventfriend-v1';
+const CACHE = 'eventfriend-v2';
 const CORE = ['./', 'index.html', 'flutter_bootstrap.js', 'manifest.json',
   'favicon.png', 'icons/Icon-192.png', 'icons/Icon-512.png'];
 

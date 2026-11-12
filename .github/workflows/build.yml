@@ -95,8 +95,9 @@ jobs:
         run: >
           flutter build web --release
           --no-web-resources-cdn
-          --web-content-hash
           --base-href /${{ github.event.repository.name }}/
+      - name: Offline file list
+        run: python3 tool/precache.py build/web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web

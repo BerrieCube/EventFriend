@@ -7,6 +7,7 @@ import '../format.dart';
 import '../platform/open_doc.dart';
 import '../store.dart';
 import 'common.dart';
+import 'viewer.dart';
 
 String fileSize(int b) {
   if (b < 1024) return '$b B';
@@ -112,13 +113,18 @@ Future<void> _rename(BuildContext context, Doc d) async {
   }
 }
 
-Future<void> openDoc(BuildContext context, Doc d) async {
+Future<void> openDoc(BuildContext context, Doc d,
+    {List<Doc> siblings = const []}) async {
   if (d.isLink) {
     await launchUrl(Uri.parse(d.url!), mode: LaunchMode.externalApplication);
     return;
   }
   final bytes = d.bytes;
   if (bytes == null) return;
+  if (viewKindOf(d) != ViewKind.none) {
+    openViewer(context, d, siblings: siblings);
+    return;
+  }
   final err = await openBytes(d.name, d.mime, bytes);
   if (err != null && context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -141,7 +147,8 @@ Future<void> shareDoc(Doc d) async {
 
 class DocTile extends StatelessWidget {
   final Doc doc;
-  const DocTile({super.key, required this.doc});
+  final List<Doc> siblings; // voor doorvegen tussen afbeeldingen
+  const DocTile({super.key, required this.doc, this.siblings = const []});
 
   IconData get _icon {
     if (doc.isLink) return Icons.link;
@@ -164,10 +171,13 @@ class DocTile extends StatelessWidget {
           leading: Icon(_icon, color: Theme.of(context).colorScheme.primary),
           title: Text(d.name, maxLines: 2, overflow: TextOverflow.ellipsis),
           subtitle: Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis),
-          onTap: () => openDoc(context, d),
+          onTap: () => openDoc(context, d, siblings: siblings),
           trailing: PopupMenuButton<String>(
             onSelected: (v) async {
               if (v == 'share') shareDoc(d);
+              if (v == 'external' && d.bytes != null) {
+                openBytes(d.name, d.mime, d.bytes!);
+              }
               if (v == 'rename') {
                 d.isLink ? addLinkDialog(context, edit: d) : _rename(context, d);
               }
@@ -177,10 +187,13 @@ class DocTile extends StatelessWidget {
                 store.deleteDoc(d.id);
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'share', child: Text('Delen')),
-              PopupMenuItem(value: 'rename', child: Text('Wijzigen')),
-              PopupMenuItem(value: 'del', child: Text('Verwijderen')),
+            itemBuilder: (_) => [
+              if (!d.isLink)
+                const PopupMenuItem(
+                    value: 'external', child: Text('Openen in andere app')),
+              const PopupMenuItem(value: 'share', child: Text('Delen')),
+              const PopupMenuItem(value: 'rename', child: Text('Wijzigen')),
+              const PopupMenuItem(value: 'del', child: Text('Verwijderen')),
             ],
           ),
         ),
@@ -246,7 +259,7 @@ class LibraryScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
           children: [
             if (files.isNotEmpty) const SectionTitle('Documenten'),
-            for (final d in files) DocTile(doc: d),
+            for (final d in files) DocTile(doc: d, siblings: files),
             if (links.isNotEmpty) const SectionTitle('Links'),
             for (final d in links) DocTile(doc: d),
           ],
