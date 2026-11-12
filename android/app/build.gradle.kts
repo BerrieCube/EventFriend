@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "nl.eventfriend.eventfriend"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
