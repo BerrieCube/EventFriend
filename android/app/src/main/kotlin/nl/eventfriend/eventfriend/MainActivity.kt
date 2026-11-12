@@ -1,0 +1,5 @@
+package nl.eventfriend.eventfriend
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()

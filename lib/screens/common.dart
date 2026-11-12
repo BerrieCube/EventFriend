@@ -1,0 +1,107 @@
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../store.dart';
+import 'calendars.dart';
+
+const muted = Color(0xFF8A8984);
+
+/// Tandwiel rechtsboven: naar de agenda-instellingen.
+class SettingsAction extends StatelessWidget {
+  const SettingsAction({super.key});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        tooltip: 'Agenda\'s',
+        icon: const Icon(Icons.settings_outlined),
+        onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const CalendarsScreen())),
+      );
+}
+
+/// Herbouwt bij elke wijziging in de opslag.
+class StoreBuilder extends StatelessWidget {
+  final WidgetBuilder builder;
+  const StoreBuilder({super.key, required this.builder});
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: store, builder: (c, _) => builder(c));
+}
+
+Future<void> openRoute(String location) => launchUrl(
+      Uri.parse(
+          'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(location)}'),
+      mode: LaunchMode.externalApplication,
+    );
+
+Future<void> callNumber(String number) =>
+    launchUrl(Uri(scheme: 'tel', path: number));
+
+Future<bool> confirm(BuildContext context, String title, String body) async {
+  final r = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: Text(title),
+      content: Text(body),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Annuleren')),
+        FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Verwijderen')),
+      ],
+    ),
+  );
+  return r ?? false;
+}
+
+class SectionTitle extends StatelessWidget {
+  final String text;
+  final Widget? trailing;
+  const SectionTitle(this.text, {super.key, this.trailing});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+        child: Row(children: [
+          Expanded(
+              child: Text(text,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600))),
+          if (trailing != null) trailing!,
+        ]),
+      );
+}
+
+class EmptyHint extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String body;
+  final Widget? action;
+  const EmptyHint(
+      {super.key,
+      required this.icon,
+      required this.title,
+      required this.body,
+      this.action});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 40, color: muted),
+          const SizedBox(height: 12),
+          Text(title,
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          Text(body,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: muted)),
+          if (action != null) ...[const SizedBox(height: 16), action!],
+        ]),
+      );
+}

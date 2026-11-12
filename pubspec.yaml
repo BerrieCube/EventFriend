@@ -1,0 +1,25 @@
+name: eventfriend
+description: "EventFriend - de werkapp voor de freelance event technicus."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  http: ^1.2.2
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  image_picker: ^1.1.2
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
