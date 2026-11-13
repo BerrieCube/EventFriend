@@ -67,7 +67,9 @@ class DeviceIntegration {
     for (final n in notes) {
       final id = _idFor(n.id);
       now.add(id);
-      final title = n.jobTitle ?? 'Notitie';
+      final title = n.title.trim().isNotEmpty
+          ? n.title.trim()
+          : (n.jobTitle ?? 'Notitie');
       await _notifications.show(
         id: id,
         title: title,
@@ -124,7 +126,12 @@ class DeviceIntegration {
 
       final note = store.notes.where((n) => n.widget).firstOrNull;
       await HomeWidget.saveWidgetData<String>(
-          'note_title', note == null ? 'Notitie' : (note.jobTitle ?? 'Notitie'));
+          'note_title',
+          note == null
+              ? 'Notitie'
+              : (note.title.trim().isNotEmpty
+                  ? note.title.trim()
+                  : (note.jobTitle ?? 'Notitie')));
       await HomeWidget.saveWidgetData<String>(
           'note_text',
           note?.text ??

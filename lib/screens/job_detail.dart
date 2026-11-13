@@ -41,7 +41,6 @@ class JobDetailScreen extends StatelessWidget {
             appBar: AppBar(),
             body: const Center(child: Text('Deze klus bestaat niet meer.')));
       }
-      final cal = store.calendar(job.calId);
       final notes = store.notesFor(job.key);
       final photos = store.photosFor(job.key);
       final docs = store.docsFor(job.key);
@@ -86,14 +85,14 @@ class JobDetailScreen extends StatelessWidget {
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
+            ClientLabel(job, size: 14),
+            const SizedBox(height: 2),
             Text(job.title,
                 style:
                     const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
             Text(
                 '${dateLong(job.start)} · ${hm(job.start)}–${hm(job.end)}',
-                style: const TextStyle(color: muted)),
-            Text(cal?.name ?? (job.isManual ? 'Eigen klus' : ''),
                 style: const TextStyle(color: muted)),
             if (job.location.isNotEmpty || phones.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -141,8 +140,15 @@ class JobDetailScreen extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Card(
                   child: ListTile(
-                    title: Text(n.text),
-                    subtitle: Text('${dateShort(n.created)} ${hm(n.created)}'),
+                    title: Text(n.heading,
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(
+                        [
+                          if (n.title.trim().isNotEmpty) n.text,
+                          '${dateShort(n.created)} ${hm(n.created)}',
+                        ].join('\n'),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis),
                     onTap: () => editNote(context, note: n, job: job),
                   ),
                 ),

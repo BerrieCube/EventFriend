@@ -99,23 +99,42 @@ class Job {
 
 class Note {
   final String id;
-  String text;
+  String title; // mag leeg zijn
+  String text; // platte tekst (afgeleid van content), voor zoeken en melding
+  String? content; // opgemaakte inhoud (Quill Delta JSON)
   String? jobKey;
   String? jobTitle;
   DateTime created;
   DateTime updated;
   bool lockscreen; // tonen als vaste melding op het vergrendelscherm
   bool widget; // tonen in de notitie-widget op het startscherm
+  bool pinned; // bovenaan vastgezet
+  List<String> tags;
+  double order; // handmatige volgorde (lager = hoger in de lijst)
 
   Note(
       {required this.id,
       required this.text,
+      this.title = '',
+      this.content,
       this.jobKey,
       this.jobTitle,
       required this.created,
       required this.updated,
       this.lockscreen = false,
-      this.widget = false});
+      this.widget = false,
+      this.pinned = false,
+      List<String>? tags,
+      double? order})
+      : tags = tags ?? [],
+        order = order ?? -created.millisecondsSinceEpoch.toDouble();
+
+  /// Kop voor lijsten en meldingen: titel, anders eerste regel.
+  String get heading {
+    if (title.trim().isNotEmpty) return title.trim();
+    final first = text.trim().split('\n').first;
+    return first.isEmpty ? 'Notitie' : first;
+  }
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -126,6 +145,11 @@ class Note {
         'updated': updated.toIso8601String(),
         'lockscreen': lockscreen,
         'widget': widget,
+        'title': title,
+        'content': content,
+        'pinned': pinned,
+        'tags': tags,
+        'order': order,
       };
 
   factory Note.fromMap(Map<String, dynamic> m) => Note(
@@ -137,6 +161,11 @@ class Note {
         updated: DateTime.parse(m['updated']),
         lockscreen: m['lockscreen'] == true,
         widget: m['widget'] == true,
+        title: m['title'] ?? '',
+        content: m['content'],
+        pinned: m['pinned'] == true,
+        tags: (m['tags'] as List?)?.map((e) => '$e').toList(),
+        order: (m['order'] as num?)?.toDouble(),
       );
 }
 
@@ -296,8 +325,49 @@ String mimeFor(String name) {
   return 'application/octet-stream';
 }
 
+class AppTile {
+  final String id;
+  String type; // 'app' (Android-app) of 'link'
+  String name;
+  String? package; // bij apps
+  String? url; // bij links (bijv. Spotify-playlist)
+  String section; // 'Algemeen' of een Tools-onderdeel
+  double order;
+
+  AppTile(
+      {required this.id,
+      required this.type,
+      required this.name,
+      this.package,
+      this.url,
+      this.section = 'Algemeen',
+      this.order = 0});
+
+  bool get isApp => type == 'app';
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'type': type,
+        'name': name,
+        'package': package,
+        'url': url,
+        'section': section,
+        'order': order,
+      };
+
+  factory AppTile.fromMap(Map<String, dynamic> m) => AppTile(
+        id: m['id'],
+        type: m['type'] ?? 'link',
+        name: m['name'] ?? '',
+        package: m['package'],
+        url: m['url'],
+        section: m['section'] ?? 'Algemeen',
+        order: ((m['order'] ?? 0) as num).toDouble(),
+      );
+}
+
 class Store extends ChangeNotifier {
-  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync, _docs;
+  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync, _docs, _apps;
 
   /// Wordt aangeroepen na elke lokale wijziging (voor automatisch synchroniseren).
   VoidCallback? onLocalChange;
@@ -316,6 +386,7 @@ class Store extends ChangeNotifier {
     _calc = await Hive.openBox('calc');
     _sync = await Hive.openBox('sync');
     _docs = await Hive.openBox('docs');
+    _apps = await Hive.openBox('apps');
   }
 
   // ---------- Laatst gebruikte invoer van calculators ----------
@@ -420,6 +491,10 @@ class Store extends ChangeNotifier {
   }
 
   // ---------- Klussen ----------
+  /// Naam van de opdrachtgever (= naam van de agenda) of "Eigen klus".
+  String clientName(Job j) =>
+      j.isManual ? 'Eigen klus' : (calendar(j.calId)?.name ?? 'Onbekend');
+
   List<Job> get jobs =>
       _jobs.values.map((v) => Job.fromMap(_m(v))).toList()
         ..sort((a, b) => a.start.compareTo(b.start));
@@ -441,15 +516,55 @@ class Store extends ChangeNotifier {
   Future<void> deleteJob(String key) => _del('job', key);
 
   // ---------- Notities ----------
+  /// Vastgezet eerst, daarna handmatige volgorde.
   List<Note> get notes => _notes.values.map((v) => Note.fromMap(_m(v))).toList()
-    ..sort((a, b) => b.updated.compareTo(a.updated));
+    ..sort((a, b) {
+      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+      return a.order.compareTo(b.order);
+    });
+
+  /// Alle gebruikte tags plus zelf aangemaakte (nog lege) tags.
+  List<String> get allTags {
+    final t = <String>{
+      for (final n in notes) ...n.tags,
+      ...List<String>.from((_sync.get('extraTags') ?? const []) as List),
+    }.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return t;
+  }
+
+  Future<void> addTag(String tag) async {
+    final l = List<String>.from((_sync.get('extraTags') ?? const []) as List);
+    if (!l.contains(tag)) {
+      l.add(tag);
+      await _sync.put('extraTags', l);
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeTag(String tag) async {
+    final l = List<String>.from((_sync.get('extraTags') ?? const []) as List)
+      ..remove(tag);
+    await _sync.put('extraTags', l);
+    for (final n in notes.where((n) => n.tags.contains(tag))) {
+      n.tags.remove(tag);
+      await saveNote(n, touch: false);
+    }
+    notifyListeners();
+  }
+
+  /// Notitie hoort bij een klus die voorbij is.
+  bool isPastJobNote(Note n) {
+    final j = job(n.jobKey);
+    return j != null && j.end.isBefore(DateTime.now());
+  }
 
   List<Note> notesFor(String jobKey) =>
       notes.where((n) => n.jobKey == jobKey).toList()
         ..sort((a, b) => a.created.compareTo(b.created));
 
-  Future<void> saveNote(Note n) async {
-    n.updated = DateTime.now();
+  Future<void> saveNote(Note n, {bool touch = true}) async {
+    if (touch) n.updated = DateTime.now();
     await _put('note', n.id, n.toMap());
   }
 
@@ -530,6 +645,17 @@ class Store extends ChangeNotifier {
     return expired.length;
   }
 
+  // ---------- App- en link-tegels (Tools) ----------
+  List<AppTile> appsIn(String section) => _apps.values
+      .map((v) => AppTile.fromMap(_m(v)))
+      .where((a) => a.section == section)
+      .toList()
+    ..sort((a, b) => a.order.compareTo(b.order));
+
+  Future<void> saveApp(AppTile a) => _put('app', a.id, a.toMap());
+
+  Future<void> deleteApp(String id) => _del('app', id);
+
   // ---------- Uren ----------
   List<TimeEntry> get hours =>
       _hours.values.map((v) => TimeEntry.fromMap(_m(v))).toList()
@@ -564,7 +690,7 @@ class Store extends ChangeNotifier {
   Future<void> deleteEntry(String id) => _del('hours', id);
 
   // ---------- Synchronisatie (gebruikt door sync.dart) ----------
-  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours', 'doc'];
+  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours', 'doc', 'app'];
 
   Box _box(String kind) => switch (kind) {
         'calendar' => _cals,
@@ -572,6 +698,7 @@ class Store extends ChangeNotifier {
         'note' => _notes,
         'photo' => _photos,
         'doc' => _docs,
+        'app' => _apps,
         _ => _hours,
       };
 

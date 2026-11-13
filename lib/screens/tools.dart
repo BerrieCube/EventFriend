@@ -4,6 +4,7 @@ import '../calc/calc.dart';
 import '../calc/defs.dart';
 import '../format.dart';
 import '../store.dart';
+import 'apps.dart';
 import 'clock.dart';
 import 'common.dart';
 import 'docs.dart';
@@ -11,53 +12,88 @@ import 'docs.dart';
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
 
+  Widget _addButton(BuildContext context, String section) => IconButton(
+        tooltip: 'App of link toevoegen aan $section',
+        icon: const Icon(Icons.add, size: 20),
+        onPressed: () => addAppOrLink(context, section: section),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Tools'), actions: const [SettingsAction()]),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        children: [
-          const Text('Werkt volledig offline.', style: TextStyle(color: muted)),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: _BigTile(
-                icon: Icons.access_time,
-                label: 'Klok',
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ClockScreen())),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _BigTile(
-                icon: Icons.folder_open,
-                label: 'Documenten & links',
-                onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LibraryScreen())),
-              ),
-            ),
-          ]),
-          for (final cat in categoryOrder) ...[
-            SectionTitle(cat),
-            for (final c in calculators.where((c) => c.category == cat))
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Card(
-                  child: ListTile(
-                    leading: Icon(c.icon, color: Theme.of(context).colorScheme.primary),
-                    title: Text(c.title),
-                    subtitle: Text(c.subtitle),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => CalcScreen(calc: c))),
-                  ),
+      appBar: AppBar(title: const Text('Tools'), actions: [
+        IconButton(
+          tooltip: 'App of link toevoegen',
+          icon: const Icon(Icons.add_to_home_screen),
+          onPressed: () => addAppOrLink(context),
+        ),
+        const SettingsAction(),
+      ]),
+      body: StoreBuilder(builder: (context) {
+        final general = visibleApps('Algemeen');
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          children: [
+            const Text('Calculators werken volledig offline.',
+                style: TextStyle(color: muted)),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: _BigTile(
+                  icon: Icons.access_time,
+                  label: 'Klok',
+                  onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const ClockScreen())),
                 ),
               ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _BigTile(
+                  icon: Icons.folder_open,
+                  label: 'Documenten & links',
+                  onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const LibraryScreen())),
+                ),
+              ),
+            ]),
+            if (general.isNotEmpty) ...[
+              SectionTitle('Apps en links',
+                  trailing: _addButton(context, 'Algemeen')),
+              TileGrid(children: [
+                for (final a in general) AppTileCard(tile: a),
+              ]),
+            ],
+            for (final cat in categoryOrder) ...[
+              SectionTitle(cat, trailing: _addButton(context, cat)),
+              TileGrid(children: [
+                for (final c in calculators.where((c) => c.category == cat))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Card(
+                      child: ListTile(
+                        leading: Icon(c.icon,
+                            color: Theme.of(context).colorScheme.primary),
+                        title: Text(c.title),
+                        subtitle: Text(c.subtitle),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => CalcScreen(calc: c))),
+                      ),
+                    ),
+                  ),
+                for (final a in visibleApps(cat)) AppTileCard(tile: a),
+              ]),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => addAppOrLink(context),
+              icon: const Icon(Icons.add),
+              label: const Text('App of link toevoegen'),
+            ),
           ],
-        ],
-      ),
+        );
+      }),
     );
   }
 }
@@ -178,9 +214,8 @@ class _CalcScreenState extends State<CalcScreen> {
             onPressed: _reset,
             icon: const Icon(Icons.restart_alt)),
       ]),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-        children: [
+      body: LayoutBuilder(builder: (context, box) {
+        final inputs = <Widget>[
           // ---------- Invoer ----------
           Card(
             child: Padding(
@@ -228,8 +263,8 @@ class _CalcScreenState extends State<CalcScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-
+        ];
+        final results = <Widget>[
           // ---------- Uitkomst ----------
           if (out.error != null)
             Card(
@@ -357,8 +392,21 @@ class _CalcScreenState extends State<CalcScreen> {
               child: Text(c.disclaimer!,
                   style: const TextStyle(color: muted, fontSize: 12)),
             ),
-        ],
-      ),
+        ];
+        const pad = EdgeInsets.fromLTRB(16, 0, 16, 32);
+        if (box.maxWidth >= 820) {
+          // Groot scherm: invoer links, uitkomst en uitleg rechts.
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(
+                width: 380,
+                child: ListView(padding: pad, children: inputs)),
+            Expanded(child: ListView(padding: pad, children: results)),
+          ]);
+        }
+        return ListView(
+            padding: pad,
+            children: [...inputs, const SizedBox(height: 12), ...results]);
+      }),
     );
   }
 }

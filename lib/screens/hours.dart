@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../format.dart';
 import '../store.dart';
 import 'common.dart';
+import 'overview.dart';
 
 class HoursScreen extends StatefulWidget {
   const HoursScreen({super.key});
@@ -34,7 +35,15 @@ class _HoursScreenState extends State<HoursScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Uren'), actions: const [SettingsAction()]),
+      appBar: AppBar(title: const Text('Uren'), actions: [
+        IconButton(
+          tooltip: 'Overzicht per opdrachtgever',
+          icon: const Icon(Icons.receipt_long_outlined),
+          onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OverviewScreen())),
+        ),
+        const SettingsAction(),
+      ]),
       floatingActionButton: FloatingActionButton(
         tooltip: 'Uren toevoegen',
         onPressed: () => editEntry(context),

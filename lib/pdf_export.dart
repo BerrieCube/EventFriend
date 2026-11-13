@@ -54,7 +54,10 @@ Future<void> exportJobPdf(BuildContext context, Job job) async {
                   pw.Text('${dateShort(n.created)} ${hm(n.created)}',
                       style: pw.TextStyle(fontSize: 9, color: grey)),
                   pw.SizedBox(height: 2),
-                  pw.Text(n.text),
+                  if (n.title.trim().isNotEmpty)
+                    pw.Text(n.title.trim(),
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.Text(n.text.replaceAll('☐', '[ ]').replaceAll('☑', '[x]')),
                 ]),
           ),
         pw.SizedBox(height: 12),

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations;
 
 import 'screens/hours.dart';
 import 'screens/jobs.dart';
@@ -48,6 +50,14 @@ class EventFriendApp extends StatelessWidget {
     return MaterialApp(
       title: 'EventFriend',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('nl'),
+      supportedLocales: const [Locale('nl'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: scheme,
@@ -82,6 +92,16 @@ class EventFriendApp extends StatelessWidget {
               borderSide: BorderSide.none),
         ),
       ),
+      // Op een groot scherm (laptop) niet over de hele breedte uitrekken.
+      builder: (context, child) => ColoredBox(
+        color: const Color(0xFF0A0B0C),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1280),
+            child: child,
+          ),
+        ),
+      ),
       home: const HomeShell(),
     );
   }
@@ -106,6 +126,55 @@ class _HomeShellState extends State<HomeShell> {
       const NotesScreen(),
       const ToolsScreen(),
     ];
+    final wide = MediaQuery.sizeOf(context).width >= 800;
+    if (wide) {
+      // Laptop/tablet: navigatie aan de zijkant, inhoud niet te breed.
+      final extended = MediaQuery.sizeOf(context).width >= 1100;
+      return Scaffold(
+        body: Row(children: [
+          NavigationRail(
+            selectedIndex: _tab,
+            extended: extended,
+            backgroundColor: const Color(0xFF141518),
+            indicatorColor: amber.withValues(alpha: 0.18),
+            selectedIconTheme: const IconThemeData(color: amber),
+            selectedLabelTextStyle: const TextStyle(color: amber),
+            unselectedLabelTextStyle: const TextStyle(color: Color(0xFF8A8984)),
+            unselectedIconTheme: const IconThemeData(color: Color(0xFF8A8984)),
+            labelType: extended
+                ? NavigationRailLabelType.none
+                : NavigationRailLabelType.all,
+            leading: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: extended
+                  ? const Text('EventFriend',
+                      style: TextStyle(
+                          color: amber,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600))
+                  : const Icon(Icons.bolt, color: amber),
+            ),
+            onDestinationSelected: (i) => setState(() => _tab = i),
+            destinations: const [
+              NavigationRailDestination(
+                  icon: Icon(Icons.home_outlined), label: Text('Vandaag')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.calendar_month_outlined),
+                  label: Text('Klussen')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.schedule), label: Text('Uren')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.sticky_note_2_outlined),
+                  label: Text('Notities')),
+              NavigationRailDestination(
+                  icon: Icon(Icons.handyman_outlined), label: Text('Tools')),
+            ],
+          ),
+          const VerticalDivider(width: 1, color: Color(0xFF232428)),
+          Expanded(child: IndexedStack(index: _tab, children: pages)),
+        ]),
+      );
+    }
     return Scaffold(
       body: IndexedStack(index: _tab, children: pages),
       bottomNavigationBar: NavigationBar(

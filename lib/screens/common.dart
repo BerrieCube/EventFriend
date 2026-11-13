@@ -146,3 +146,42 @@ class EmptyHint extends StatelessWidget {
         ]),
       );
 }
+
+/// Naam van de opdrachtgever, klein en duidelijk boven de klusnaam.
+class ClientLabel extends StatelessWidget {
+  final Job job;
+  final double size;
+  const ClientLabel(this.job, {super.key, this.size = 12});
+
+  @override
+  Widget build(BuildContext context) => Text(
+        store.clientName(job),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+          fontSize: size,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.3,
+        ),
+      );
+}
+
+/// Kaarten in kolommen op een breed scherm, onder elkaar op de telefoon.
+class TileGrid extends StatelessWidget {
+  final List<Widget> children;
+  final double minTileWidth;
+  const TileGrid({super.key, required this.children, this.minTileWidth = 320});
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        final cols = (box.maxWidth / minTileWidth).floor().clamp(1, 4);
+        if (cols == 1) return Column(children: children);
+        const gap = 8.0;
+        final w = (box.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          children: [for (final c in children) SizedBox(width: w, child: c)],
+        );
+      });
+}

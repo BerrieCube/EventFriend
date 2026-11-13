@@ -6,6 +6,7 @@ import '../sync.dart';
 import 'calendars.dart';
 import 'common.dart';
 import 'job_detail.dart';
+import 'overview.dart';
 
 class JobsScreen extends StatelessWidget {
   const JobsScreen({super.key});
@@ -30,6 +31,12 @@ class JobsScreen extends StatelessWidget {
                     value: 'cal', child: Text('Rentman-agenda toevoegen')),
                 PopupMenuItem(value: 'job', child: Text('Eigen klus toevoegen')),
               ],
+            ),
+            IconButton(
+              tooltip: 'Overzicht per opdrachtgever',
+              icon: const Icon(Icons.receipt_long_outlined),
+              onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const OverviewScreen())),
             ),
             const SettingsAction(),
           ],
@@ -79,7 +86,6 @@ class _JobList extends StatelessWidget {
               itemBuilder: (context, i) {
                 final j = jobs[i];
                 final showDay = i == 0 || !sameDay(jobs[i - 1].start, j.start);
-                final cal = store.calendar(j.calId);
                 final notes = store.notesFor(j.key).length;
                 final photos = store.photosFor(j.key).length;
                 return Column(
@@ -95,11 +101,15 @@ class _JobList extends StatelessWidget {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Card(
                         child: ListTile(
-                          title: Text(j.title),
+                          title: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClientLabel(j),
+                                Text(j.title),
+                              ]),
                           subtitle: Text([
                             '${hm(j.start)}–${hm(j.end)}',
                             if (j.location.isNotEmpty) j.location,
-                            cal?.name ?? (j.isManual ? 'Eigen klus' : ''),
                           ].join(' · ')),
                           trailing: (notes + photos) > 0
                               ? Row(mainAxisSize: MainAxisSize.min, children: [

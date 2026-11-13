@@ -1,6 +1,7 @@
 import 'package:eventfriend/calc/bridle.dart';
 import 'package:eventfriend/calc/defs.dart';
 import 'package:eventfriend/ical.dart';
+import 'package:eventfriend/note_text.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -91,5 +92,17 @@ void main() {
     expect(e.first.description, 'PM Jan 06-12345678\nLED-wall 6x3');
     expect(e.first.start, DateTime(2026, 11, 12, 8, 30));
     expect(normalizeCalendarUrl('webcal://x.nl/a.ics'), 'https://x.nl/a.ics');
+  });
+
+  test('notitie-opmaak naar platte tekst', () {
+    const delta = '[{"insert":"Inpakken"},{"insert":"\\n","attributes":{"list":"checked"}},'
+        '{"insert":"Kabels"},{"insert":"\\n","attributes":{"list":"unchecked"}},'
+        '{"insert":"Eerste"},{"insert":"\\n","attributes":{"list":"ordered"}},'
+        '{"insert":"Tweede"},{"insert":"\\n","attributes":{"list":"ordered"}},'
+        '{"insert":"vet","attributes":{"bold":true}},{"insert":" punt"},'
+        '{"insert":"\\n","attributes":{"list":"bullet"}}]';
+    expect(deltaToPlain(delta),
+        '☑ Inpakken\n☐ Kabels\n1. Eerste\n2. Tweede\n• vet punt');
+    expect(deltaToPlain(plainToDelta('Hallo\nwereld')), 'Hallo\nwereld');
   });
 }

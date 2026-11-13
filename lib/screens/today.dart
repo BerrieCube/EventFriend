@@ -91,8 +91,14 @@ class _TodayScreenState extends State<TodayScreen> {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Card(
                       child: ListTile(
-                        title: Text(j.title,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        title: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ClientLabel(j),
+                              Text(j.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ]),
                         subtitle: Text(
                             '${dateShort(j.start)} · ${hm(j.start)}${j.location.isEmpty ? '' : ' · ${j.location}'}',
                             maxLines: 1,
@@ -118,7 +124,6 @@ class _TodayJob extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final amber = Theme.of(context).colorScheme.primary;
-    final cal = store.calendar(job.calId);
     final phones = job.phoneNumbers;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Card(
@@ -130,8 +135,7 @@ class _TodayJob extends StatelessWidget {
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(cal?.name ?? (job.isManual ? 'Eigen klus' : ''),
-                      style: const TextStyle(color: muted, fontSize: 12)),
+                  ClientLabel(job, size: 13),
                   const SizedBox(height: 2),
                   Text(job.title,
                       style: const TextStyle(
