@@ -1,5 +1,6 @@
 import 'package:eventfriend/calc/bridle.dart';
 import 'package:eventfriend/calc/defs.dart';
+import 'package:eventfriend/format.dart';
 import 'package:eventfriend/ical.dart';
 import 'package:eventfriend/note_text.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -104,5 +105,14 @@ void main() {
     expect(deltaToPlain(delta),
         '☑ Inpakken\n☐ Kabels\n1. Eerste\n2. Tweede\n• vet punt');
     expect(deltaToPlain(plainToDelta('Hallo\nwereld')), 'Hallo\nwereld');
+  });
+
+  test('weekstart klopt over de wintertijd heen', () {
+    // Zondag 25 okt 2026 (klok gaat terug) hoort bij maandag 19 okt.
+    expect(weekStart(DateTime(2026, 10, 25, 14)), DateTime(2026, 10, 19));
+    expect(weekStart(DateTime(2026, 3, 29, 14)), DateTime(2026, 3, 23));
+    final w = weekStart(DateTime(2026, 11, 13));
+    expect(DateTime(w.year, w.month, w.day - 7 * 4), DateTime(2026, 10, 12));
+    expect(isoWeek(DateTime(2026, 10, 25)), 43);
   });
 }

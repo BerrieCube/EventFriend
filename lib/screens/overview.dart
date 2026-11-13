@@ -19,20 +19,20 @@ class OverviewScreen extends StatefulWidget {
 
 class _OverviewScreenState extends State<OverviewScreen> {
   int _weeksShown = 12;
-  late final Set<DateTime> _selected = {
-    weekStart(DateTime.now()).subtract(const Duration(days: 7))
-  };
+  late final Set<DateTime> _selected = {_weekBack(weekStart(DateTime.now()), 1)};
+
+  static DateTime _weekBack(DateTime w, int n) =>
+      DateTime(w.year, w.month, w.day - 7 * n);
 
   List<DateTime> get _weeks {
     final current = weekStart(DateTime.now());
     return [
-      for (var i = 0; i < _weeksShown; i++)
-        current.subtract(Duration(days: 7 * i))
+      for (var i = 0; i < _weeksShown; i++) _weekBack(current, i)
     ];
   }
 
   String _weekLabel(DateTime w) {
-    final end = w.add(const Duration(days: 6));
+    final end = DateTime(w.year, w.month, w.day + 6);
     return 'Wk ${isoWeek(w)} · ${w.day} ${_mon(w)}–${end.day} ${_mon(end)}';
   }
 

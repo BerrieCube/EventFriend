@@ -55,7 +55,7 @@ List<IcalEvent> parseIcal(String text) {
       if (start == null) continue;
       var end = _parseDate(c['DTEND']) ?? start.add(const Duration(hours: 1));
       if (c['DTSTART']!.isDateOnly && c['DTEND'] == null) {
-        end = start.add(const Duration(days: 1));
+        end = DateTime(start.year, start.month, start.day + 1);
       }
       events.add(IcalEvent(
         uid: c['UID']?.value ?? '${start.toIso8601String()}-${c['SUMMARY']?.value}',

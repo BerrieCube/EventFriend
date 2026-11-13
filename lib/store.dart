@@ -507,7 +507,7 @@ class Store extends ChangeNotifier {
 
   List<Job> jobsOn(DateTime day) {
     final s = DateTime(day.year, day.month, day.day);
-    final e = s.add(const Duration(days: 1));
+    final e = DateTime(s.year, s.month, s.day + 1);
     return jobs.where((j) => j.start.isBefore(e) && j.end.isAfter(s)).toList();
   }
 

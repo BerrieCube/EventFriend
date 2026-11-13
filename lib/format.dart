@@ -60,12 +60,14 @@ bool sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
 /// Maandag van de week waarin [d] valt.
+/// Rekent in kalenderdagen (niet in 24 uur), zodat zomer-/wintertijd
+/// de datum niet verschuift.
 DateTime weekStart(DateTime d) =>
-    dayStart(d).subtract(Duration(days: d.weekday - 1));
+    DateTime(d.year, d.month, d.day - (d.weekday - 1));
 
 /// ISO-weeknummer.
 int isoWeek(DateTime d) {
-  final thursday = d.add(Duration(days: 4 - d.weekday));
-  final jan1 = DateTime(thursday.year, 1, 1);
+  final thursday = DateTime.utc(d.year, d.month, d.day + 4 - d.weekday);
+  final jan1 = DateTime.utc(thursday.year, 1, 1);
   return ((thursday.difference(jan1).inDays) ~/ 7) + 1;
 }
