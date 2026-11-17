@@ -4,6 +4,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import 'format.dart';
+import 'pdf_theme.dart';
 import 'store.dart';
 
 /// Maakt een PDF met de notities en foto's van een klus en opent het
@@ -20,7 +21,9 @@ Future<void> exportJobPdf(BuildContext context, Job job) async {
   final doc = pw.Document(title: job.title, author: 'EventFriend');
   final grey = PdfColor.fromInt(0xFF666666);
 
+  final theme = await pdfTheme();
   doc.addPage(pw.MultiPage(
+    theme: theme,
     pageFormat: PdfPageFormat.a4,
     margin: const pw.EdgeInsets.all(36),
     footer: (c) => pw.Align(
@@ -32,7 +35,7 @@ Future<void> exportJobPdf(BuildContext context, Job job) async {
       pw.Text(job.title,
           style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
       pw.SizedBox(height: 4),
-      pw.Text('${dateLong(job.start)}, ${hm(job.start)} - ${hm(job.end)}',
+      pw.Text('${dateLong(job.start)} · ${hm(job.start)}–${hm(job.end)} · week ${isoWeek(job.start)}',
           style: pw.TextStyle(color: grey)),
       if (job.location.isNotEmpty)
         pw.Text(job.location, style: pw.TextStyle(color: grey)),
@@ -57,7 +60,7 @@ Future<void> exportJobPdf(BuildContext context, Job job) async {
                   if (n.title.trim().isNotEmpty)
                     pw.Text(n.title.trim(),
                         style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                  pw.Text(n.text.replaceAll('☐', '[ ]').replaceAll('☑', '[x]')),
+                  linkedText(n.text.replaceAll('☐', '[ ]').replaceAll('☑', '[x]')),
                 ]),
           ),
         pw.SizedBox(height: 12),
@@ -77,7 +80,7 @@ Future<void> exportJobPdf(BuildContext context, Job job) async {
                   if (p.caption.isNotEmpty)
                     pw.Padding(
                         padding: const pw.EdgeInsets.only(top: 4),
-                        child: pw.Text(p.caption,
+                        child: linkedText(p.caption,
                             style: pw.TextStyle(fontSize: 10, color: grey))),
                 ]),
           ),

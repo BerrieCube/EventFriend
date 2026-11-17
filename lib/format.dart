@@ -71,3 +71,17 @@ int isoWeek(DateTime d) {
   final jan1 = DateTime.utc(thursday.year, 1, 1);
   return ((thursday.difference(jan1).inDays) ~/ 7) + 1;
 }
+
+/// Bedrag in euro's: € 12,50
+String euro(double v) => '€ ${nf(v, 2)}';
+
+const _monthsLong = [
+  'januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli',
+  'augustus', 'september', 'oktober', 'november', 'december'
+];
+
+/// "november 2026"
+String monthYear(DateTime d) => '${_monthsLong[d.month - 1]} ${d.year}';
+
+/// Korte dagnamen, maandag eerst.
+const weekdayShort = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];

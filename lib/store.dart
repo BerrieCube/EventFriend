@@ -366,8 +366,49 @@ class AppTile {
       );
 }
 
+/// Eigen gegevens bij een klus (ook bij Rentman-klussen, die zelf
+/// alleen-lezen zijn): gefactureerd, kilometers en onkosten.
+class JobMeta {
+  final String id; // = sleutel van de klus
+  DateTime? invoiced;
+  double km;
+  double parking;
+  double costs;
+  String costNote;
+
+  JobMeta(
+      {required this.id,
+      this.invoiced,
+      this.km = 0,
+      this.parking = 0,
+      this.costs = 0,
+      this.costNote = ''});
+
+  double get expenses => parking + costs;
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'invoiced': invoiced?.toIso8601String(),
+        'km': km,
+        'parking': parking,
+        'costs': costs,
+        'costNote': costNote,
+      };
+
+  factory JobMeta.fromMap(Map<String, dynamic> m) => JobMeta(
+        id: m['id'],
+        invoiced:
+            m['invoiced'] == null ? null : DateTime.parse(m['invoiced']),
+        km: ((m['km'] ?? 0) as num).toDouble(),
+        parking: ((m['parking'] ?? 0) as num).toDouble(),
+        costs: ((m['costs'] ?? 0) as num).toDouble(),
+        costNote: m['costNote'] ?? '',
+      );
+}
+
 class Store extends ChangeNotifier {
-  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync, _docs, _apps;
+  late Box _cals, _jobs, _notes, _photos, _hours, _calc, _sync, _docs, _apps,
+      _meta, _prefs;
 
   /// Wordt aangeroepen na elke lokale wijziging (voor automatisch synchroniseren).
   VoidCallback? onLocalChange;
@@ -387,7 +428,36 @@ class Store extends ChangeNotifier {
     _sync = await Hive.openBox('sync');
     _docs = await Hive.openBox('docs');
     _apps = await Hive.openBox('apps');
+    _meta = await Hive.openBox('jobmeta');
+    _prefs = await Hive.openBox('prefs');
+    await _repairHours();
   }
+
+  /// Een oudere app-versie zette onbekende soorten (zoals 'jobmeta') bij de
+  /// uren. Die worden opgeruimd en daarna wordt alles opnieuw opgehaald.
+  Future<void> _repairHours() async {
+    final bad = _hours.keys.where((k) {
+      final v = _hours.get(k);
+      return v is! Map || v['start'] == null;
+    }).toList();
+    if (bad.isEmpty) return;
+    await _hours.deleteAll(bad);
+    await _sync.delete('lastPull');
+  }
+
+  // ---------- Instellingen (gesynchroniseerd) ----------
+  dynamic pref(String key, [dynamic def]) {
+    final v = _prefs.get(key);
+    return v == null ? def : _m(v)['v'] ?? def;
+  }
+
+  Future<void> setPref(String key, dynamic value) =>
+      _put('setting', key, {'v': value});
+
+  String get homeAddress => pref('home', '') as String;
+
+  /// Minuten vóór de start van een klus voor de calltime-herinnering (0 = uit).
+  int get reminderMinutes => (pref('reminder', 0) as num).toInt();
 
   // ---------- Laatst gebruikte invoer van calculators ----------
   Map<String, String> calcInputs(String id) {
@@ -463,9 +533,13 @@ class Store extends ChangeNotifier {
         throw Exception('Dit lijkt geen iCal-agenda te zijn');
       }
       final events = parseIcal(body);
-      final old = _jobs.keys
-          .where((k) => _m(_jobs.get(k))['calId'] == c.id)
-          .toList();
+      // Afgelopen klussen die uit de feed verdwijnen (Rentman toont vaak
+      // maar een beperkte periode) blijven bewaard voor je administratie.
+      final now = DateTime.now();
+      final old = _jobs.keys.where((k) {
+        final m = _m(_jobs.get(k));
+        return m['calId'] == c.id && !DateTime.parse(m['end']).isBefore(now);
+      }).toList();
       await _jobs.deleteAll(old);
       final entries = <String, dynamic>{};
       for (final e in events) {
@@ -509,6 +583,37 @@ class Store extends ChangeNotifier {
     final s = DateTime(day.year, day.month, day.day);
     final e = DateTime(s.year, s.month, s.day + 1);
     return jobs.where((j) => j.start.isBefore(e) && j.end.isAfter(s)).toList();
+  }
+
+  // ---------- Facturatie, kilometers en onkosten ----------
+  JobMeta meta(String jobKey) {
+    final v = _meta.get(jobKey);
+    return v == null ? JobMeta(id: jobKey) : JobMeta.fromMap(_m(v));
+  }
+
+  Future<void> saveMeta(JobMeta m) => _put('jobmeta', m.id, m.toMap());
+
+  bool isInvoiced(Job j) => meta(j.key).invoiced != null;
+
+  Future<void> setInvoiced(Iterable<Job> jobs, bool invoiced) async {
+    final t = DateTime.now();
+    for (final j in jobs) {
+      final m = meta(j.key);
+      if ((m.invoiced != null) == invoiced) continue;
+      m.invoiced = invoiced ? t : null;
+      await saveMeta(m);
+    }
+  }
+
+  /// Kilometers voor een klus: ingevuld bij de klus plus eventueel bij de uren.
+  double kmFor(Job j) =>
+      meta(j.key).km +
+      hours.where((h) => h.jobKey == j.key).fold(0.0, (s, h) => s + h.km);
+
+  /// Afgelopen klussen die nog niet gefactureerd zijn.
+  List<Job> get toProcess {
+    final now = DateTime.now();
+    return jobs.where((j) => !j.end.isAfter(now) && !isInvoiced(j)).toList();
   }
 
   Future<void> saveManualJob(Job j) => _put('job', j.key, j.toMap());
@@ -690,7 +795,10 @@ class Store extends ChangeNotifier {
   Future<void> deleteEntry(String id) => _del('hours', id);
 
   // ---------- Synchronisatie (gebruikt door sync.dart) ----------
-  static const kinds = ['calendar', 'job', 'note', 'photo', 'hours', 'doc', 'app'];
+  static const kinds = [
+    'calendar', 'job', 'note', 'photo', 'hours', 'doc', 'app', 'jobmeta',
+    'setting'
+  ];
 
   Box _box(String kind) => switch (kind) {
         'calendar' => _cals,
@@ -699,6 +807,8 @@ class Store extends ChangeNotifier {
         'photo' => _photos,
         'doc' => _docs,
         'app' => _apps,
+        'jobmeta' => _meta,
+        'setting' => _prefs,
         _ => _hours,
       };
 
@@ -753,6 +863,7 @@ class Store extends ChangeNotifier {
   /// Wijziging van de server toepassen zonder hem opnieuw als "dirty" te markeren.
   Future<void> applyRemote(String kind, String id, Map<String, dynamic>? data,
       {Uint8List? bytes}) async {
+    if (!kinds.contains(kind)) return; // nieuwere app-versie: overslaan
     final box = _box(kind);
     if (data == null) {
       await box.delete(id);

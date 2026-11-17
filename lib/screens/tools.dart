@@ -8,6 +8,7 @@ import 'apps.dart';
 import 'clock.dart';
 import 'common.dart';
 import 'docs.dart';
+import 'power_sheet.dart';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -79,6 +80,23 @@ class ToolsScreen extends StatelessWidget {
                         onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                                 builder: (_) => CalcScreen(calc: c))),
+                      ),
+                    ),
+                  ),
+                if (cat == 'Stroom')
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Card(
+                      child: ListTile(
+                        leading: Icon(Icons.menu_book_outlined,
+                            color: Theme.of(context).colorScheme.primary),
+                        title: const Text('Spiekbrief stroom'),
+                        subtitle: const Text(
+                            'Aansluitingen, kabels, kleuren, vuistregels'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const PowerSheetScreen())),
                       ),
                     ),
                   ),

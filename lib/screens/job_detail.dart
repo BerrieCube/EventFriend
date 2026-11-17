@@ -6,6 +6,7 @@ import '../pdf_export.dart';
 import '../store.dart';
 import 'common.dart';
 import 'docs.dart';
+import 'expenses.dart';
 import 'jobs.dart';
 import 'notes.dart';
 
@@ -114,10 +115,12 @@ class JobDetailScreen extends StatelessWidget {
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
-                  child: SelectableText(job.description),
+                  child: LinkText(job.description),
                 ),
               ),
             ],
+            const SectionTitle('Kilometers & onkosten'),
+            ExpensesCard(job: job),
             SectionTitle('Callsheet en documenten',
                 trailing: IconButton(
                     tooltip: 'Document toevoegen',

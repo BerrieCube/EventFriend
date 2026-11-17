@@ -3,6 +3,8 @@ import 'package:eventfriend/calc/defs.dart';
 import 'package:eventfriend/format.dart';
 import 'package:eventfriend/ical.dart';
 import 'package:eventfriend/note_text.dart';
+import 'package:eventfriend/pdf_theme.dart';
+import 'package:eventfriend/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -114,5 +116,29 @@ void main() {
     final w = weekStart(DateTime(2026, 11, 13));
     expect(DateTime(w.year, w.month, w.day - 7 * 4), DateTime(2026, 10, 12));
     expect(isoWeek(DateTime(2026, 10, 25)), 43);
+  });
+
+  test('kW naar kVA en terug', () {
+    final c = calculators.firstWhere((c) => c.id == 'kva');
+    final o = c.computeWith({'kw': 80, 'pf': 0.8});
+    expect(o.results.first.value, '100,0');
+    final b = c.computeWith({'kva': 100, 'pf': 0.8}, {'mode': 'kw'});
+    expect(b.results.first.value, '80,0');
+    expect(b.results[1].value, '60,0'); // kvar
+  });
+
+  test('links in tekst herkennen', () {
+    final p = splitLinks('Zie https://rentman.io/x. en www.voorbeeld.nl!');
+    expect(p.where((e) => e.$2 != null).map((e) => e.$2),
+        ['https://rentman.io/x', 'https://www.voorbeeld.nl']);
+    expect(p.map((e) => e.$1).join(), 'Zie https://rentman.io/x. en www.voorbeeld.nl!');
+  });
+
+  test('klusgegevens bewaren', () {
+    final m = JobMeta(id: 'a|1', km: 84, parking: 7.5, costs: 3, costNote: 'tol');
+    final r = JobMeta.fromMap(m.toMap());
+    expect(r.km, 84);
+    expect(r.expenses, 10.5);
+    expect(r.invoiced, isNull);
   });
 }

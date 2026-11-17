@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../platform/open_doc.dart';
 import '../store.dart';
+import 'common.dart' show LinkText;
 import 'docs.dart' show shareDoc;
 
 /// Welke bestanden de ingebouwde viewer kan tonen.
@@ -177,6 +179,17 @@ class _PdfViewScreenState extends State<PdfViewScreen> {
             backgroundColor: const Color(0xFF0F1012),
             margin: 8,
             pagePaintCallbacks: [s.pageTextMatchPaintCallback],
+            // Links in de PDF (en losse webadressen in de tekst) zijn aantikbaar.
+            linkHandlerParams: PdfLinkHandlerParams(
+              linkColor: const Color(0x2A2196F3),
+              onLinkTap: (link) {
+                if (link.url != null) {
+                  launchUrl(link.url!, mode: LaunchMode.externalApplication);
+                } else if (link.dest != null) {
+                  _controller.goToDest(link.dest);
+                }
+              },
+            ),
             onViewerReady: (doc, c) =>
                 setState(() => _pages = doc.pages.length),
             onPageChanged: (p) => setState(() => _page = p),
@@ -323,7 +336,7 @@ class TextViewScreen extends StatelessWidget {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: SelectableText(text,
+        child: LinkText(text,
             style: const TextStyle(
                 fontFamily: 'monospace', fontSize: 13, height: 1.4)),
       ),

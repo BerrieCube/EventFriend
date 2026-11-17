@@ -4,7 +4,9 @@ import '../format.dart';
 import '../store.dart';
 import '../sync.dart';
 import 'calendars.dart';
+import '../device.dart';
 import 'common.dart';
+import 'expenses.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -44,6 +46,55 @@ class SettingsScreen extends StatelessWidget {
                       MaterialPageRoute(builder: (_) => const CalendarsScreen())),
                 ),
               ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.home_outlined),
+                  title: const Text('Thuisadres'),
+                  subtitle: Text(store.homeAddress.isEmpty
+                      ? 'Nog niet ingevuld (voor kilometers berekenen)'
+                      : store.homeAddress),
+                  trailing: const Icon(Icons.edit_outlined),
+                  onTap: () => askHomeAddress(context),
+                ),
+              ),
+              if (device.supported) ...[
+                const SizedBox(height: 8),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.alarm),
+                    title: const Text('Calltime-herinnering'),
+                    subtitle: const Text('Melding vóór de start van elke klus'),
+                    trailing: DropdownButton<int>(
+                      value: store.reminderMinutes,
+                      underline: const SizedBox(),
+                      items: [
+                        for (final m in const [0, 30, 60, 90, 120, 180, 240])
+                          DropdownMenuItem(
+                              value: m,
+                              child: Text(m == 0
+                                  ? 'Uit'
+                                  : m < 60
+                                      ? '$m min'
+                                      : '${nf(m / 60, m % 60 == 0 ? 0 : 1)} uur')),
+                      ],
+                      onChanged: (m) async {
+                        if (m == null) return;
+                        if (m > 0 && !await device.requestPermission()) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Sta meldingen toe voor EventFriend in de Android-instellingen.')));
+                          }
+                          return;
+                        }
+                        await store.setPref('reminder', m);
+                      },
+                    ),
+                  ),
+                ),
+              ],
             ],
           );
         },

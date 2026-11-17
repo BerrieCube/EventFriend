@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../pdf_theme.dart' show splitLinks;
 import '../store.dart';
 import 'settings.dart';
 
@@ -184,4 +186,58 @@ class TileGrid extends StatelessWidget {
           children: [for (final c in children) SizedBox(width: w, child: c)],
         );
       });
+}
+
+
+/// Selecteerbare tekst waarin webadressen aantikbaar zijn.
+class LinkText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  const LinkText(this.text, {super.key, this.style});
+
+  @override
+  State<LinkText> createState() => _LinkTextState();
+}
+
+class _LinkTextState extends State<LinkText> {
+  final _recognizers = <TapGestureRecognizer>[];
+
+  void _clear() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _clear();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _clear();
+    final link = TextStyle(
+        color: Theme.of(context).colorScheme.primary,
+        decoration: TextDecoration.underline);
+    return SelectableText.rich(TextSpan(style: widget.style, children: [
+      for (final p in splitLinks(widget.text))
+        if (p.$2 == null)
+          TextSpan(text: p.$1)
+        else
+          TextSpan(
+            text: p.$1,
+            style: link,
+            recognizer: (TapGestureRecognizer()
+              ..onTap = () => launchUrl(Uri.parse(p.$2!),
+                  mode: LaunchMode.externalApplication))
+              .._register(_recognizers),
+          ),
+    ]));
+  }
+}
+
+extension on TapGestureRecognizer {
+  void _register(List<TapGestureRecognizer> l) => l.add(this);
 }

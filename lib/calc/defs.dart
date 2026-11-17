@@ -385,6 +385,56 @@ final List<Calculator> calculators = [
     },
   ),
   Calculator(
+    id: 'kva',
+    category: 'Stroom',
+    title: 'kW ↔ kVA',
+    subtitle: 'Werkelijk en schijnbaar vermogen, aggregaat',
+    icon: Icons.electrical_services,
+    fields: [
+      const ChoiceField('mode', 'Bereken',
+          options: [('kva', 'kVA uit kW'), ('kw', 'kW uit kVA')], def: 'kva'),
+      NumField('kw', 'Werkelijk vermogen', unit: 'kW', def: 40,
+          visibleIf: (c) => c['mode'] == 'kva'),
+      NumField('kva', 'Schijnbaar vermogen', unit: 'kVA', def: 100,
+          visibleIf: (c) => c['mode'] == 'kw'),
+      const NumField('pf', 'Arbeidsfactor (cos φ)', def: 0.8),
+      const ChoiceField('sys', 'Net',
+          options: [('3', '3-fase 400 V'), ('1', '1-fase 230 V')], def: '3'),
+    ],
+    compute: (i) {
+      final o = CalcOutput();
+      final pf = i.n('pf');
+      if (pf <= 0 || pf > 1) return o.fail('cos φ ligt tussen 0 en 1.');
+      final double kw, kva;
+      if (i.c('mode') == 'kva') {
+        kw = i.n('kw');
+        kva = kw / pf;
+        o.res('Schijnbaar vermogen', f(kva, 1), unit: 'kVA', primary: true);
+        o.step('S = P / cos φ = ${f(kw, 1)} / ${f(pf)} = ${f(kva, 2)} kVA');
+      } else {
+        kva = i.n('kva');
+        kw = kva * pf;
+        o.res('Werkelijk vermogen', f(kw, 1), unit: 'kW', primary: true);
+        o.step('P = S × cos φ = ${f(kva, 1)} × ${f(pf)} = ${f(kw, 2)} kW');
+      }
+      if (kw < 0) return o.fail('Vermogen kan niet negatief zijn.');
+      final kvar = sqrt(max(0, kva * kva - kw * kw));
+      o.res('Blindvermogen', f(kvar, 1), unit: 'kvar');
+      o.step('Q = √(S² − P²) = √(${f(kva, 1)}² − ${f(kw, 1)}²) = ${f(kvar, 2)} kvar');
+      final three = i.c('sys') == '3';
+      final a = three ? kva * 1000 / (sqrt(3) * 400) : kva * 1000 / 230;
+      o.res(three ? 'Stroom per fase' : 'Stroom', f(a, 1), unit: 'A');
+      o.step(three
+          ? 'I = S / (√3 × 400 V) = ${f(kva * 1000, 0)} / 692,8 = ${f(a, 1)} A'
+          : 'I = S / 230 V = ${f(kva * 1000, 0)} / 230 = ${f(a, 1)} A');
+      o.step('Aggregaten worden in kVA opgegeven, meestal bij cos φ 0,8. '
+          'Kies een aggregaat met marge (ca. 20–25 %) boven je berekende kVA.');
+      if (three && a > 63 && a <= 125) o.warn('Meer dan 63 A per fase: 125A-CEE of Powerlock nodig.');
+      if (three && a > 125) o.warn('Meer dan 125 A per fase: Powerlock nodig.');
+      return o;
+    },
+  ),
+  Calculator(
     id: 'vdrop',
     category: 'Stroom',
     title: 'Spanningsval en kabel',

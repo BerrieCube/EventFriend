@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations;
 
 import 'screens/hours.dart';
+import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
 import 'screens/notes.dart';
 import 'screens/today.dart';
@@ -116,6 +117,36 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    device.openRequest.addListener(_open);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _open());
+  }
+
+  @override
+  void dispose() {
+    device.openRequest.removeListener(_open);
+    super.dispose();
+  }
+
+  /// Aangetikte melding: open de notitie of klus.
+  void _open() {
+    final p = device.openRequest.value;
+    if (p == null || !mounted) return;
+    device.openRequest.value = null;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    if (p.startsWith('note:')) {
+      final id = p.substring(5);
+      final n = store.notes.where((n) => n.id == id).firstOrNull;
+      if (n == null) return;
+      setState(() => _tab = 3);
+      editNote(context, note: n, job: store.job(n.jobKey));
+    } else if (p.startsWith('job:')) {
+      openJob(context, p.substring(4));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
