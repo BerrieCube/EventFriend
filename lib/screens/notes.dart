@@ -1,7 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../device.dart';
 import '../format.dart';
@@ -10,10 +13,86 @@ import '../store.dart';
 import 'common.dart';
 import 'job_detail.dart';
 
+const _cardColor = Color(0xFF1B1C1F);
+const _line = Color(0xFF2E2F33);
+
+Color spaceColor(String s) => Color(store.spaceColor(s));
+
+/// Privé is ontgrendeld tot de app naar de achtergrond gaat.
+bool privateUnlocked = false;
+
+/// Vraagt de pincode voor Privé (als die is ingesteld). true = toegang.
+Future<bool> unlockPrivate(BuildContext context) async {
+  final pin = store.privatePin;
+  if (pin == null || privateUnlocked) return true;
+  final ctrl = TextEditingController();
+  String? err;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (c) => StatefulBuilder(builder: (c, setS) {
+      void check() {
+        if (ctrl.text == pin) {
+          Navigator.pop(c, true);
+        } else {
+          setS(() => err = 'Onjuiste pincode');
+          ctrl.clear();
+        }
+      }
+
+      return AlertDialog(
+        title: Text('${store.spaceName('private')} openen'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: InputDecoration(labelText: 'Pincode', errorText: err),
+          onSubmitted: (_) => check(),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Annuleren')),
+          FilledButton(onPressed: check, child: const Text('Openen')),
+        ],
+      );
+    }),
+  );
+  if (ok == true) privateUnlocked = true;
+  return ok == true;
+}
+
 /// Notitie maken of wijzigen. Met [job] wordt hij aan die klus gekoppeld.
-Future<void> editNote(BuildContext context, {Note? note, Job? job, String? tag}) {
-  return Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _NoteEditor(note: note, job: job, tag: tag)));
+/// Op een groot scherm opent de editor als venster, anders schermvullend.
+Future<void> editNote(BuildContext context,
+    {Note? note,
+    Job? job,
+    String? tag,
+    String space = 'work',
+    bool checklist = false,
+    bool photo = false}) {
+  final editor = _NoteEditor(
+      note: note,
+      job: job,
+      tag: tag,
+      space: space,
+      checklist: checklist,
+      photo: photo);
+  if (MediaQuery.sizeOf(context).width >= 800) {
+    return showDialog(
+      context: context,
+      builder: (c) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        insetPadding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680, maxHeight: 760),
+          child: editor,
+        ),
+      ),
+    );
+  }
+  return Navigator.of(context).push(MaterialPageRoute(builder: (_) => editor));
 }
 
 // ============================================================ Editor
@@ -22,25 +101,38 @@ class _NoteEditor extends StatefulWidget {
   final Note? note;
   final Job? job;
   final String? tag;
-  const _NoteEditor({this.note, this.job, this.tag});
+  final String space;
+  final bool checklist;
+  final bool photo;
+  const _NoteEditor(
+      {this.note,
+      this.job,
+      this.tag,
+      this.space = 'work',
+      this.checklist = false,
+      this.photo = false});
 
   @override
   State<_NoteEditor> createState() => _NoteEditorState();
 }
 
 class _NoteEditorState extends State<_NoteEditor> {
+  late final String _id = widget.note?.id ?? newId();
   late final _title = TextEditingController(text: widget.note?.title ?? '');
   late final QuillController _quill;
   final _focus = FocusNode();
   final _scroll = ScrollController();
   late String? _jobKey = widget.note?.jobKey ?? widget.job?.key;
+  late String _space = widget.note?.space ?? widget.space;
   late bool _lock = widget.note?.lockscreen ?? false;
   late bool _widget = widget.note?.widget ?? false;
   late bool _pinned = widget.note?.pinned ?? false;
+  late bool _archived = widget.note?.archived ?? false;
   late final List<String> _tags = [
     ...?widget.note?.tags,
     if (widget.note == null && widget.tag != null) widget.tag!,
   ];
+  bool _format = false;
   bool _saved = false;
 
   @override
@@ -50,14 +142,28 @@ class _NoteEditorState extends State<_NoteEditor> {
     final delta = n?.content ?? (n == null ? null : plainToDelta(n.text));
     Document doc;
     try {
-      doc = delta == null
-          ? Document()
-          : Document.fromJson(jsonDecode(delta) as List);
+      doc = delta != null
+          ? Document.fromJson(jsonDecode(delta) as List)
+          : widget.checklist
+              ? Document.fromJson([
+                  {
+                    'insert': '\n',
+                    'attributes': {'list': 'unchecked'}
+                  }
+                ])
+              : Document();
     } catch (_) {
       doc = Document()..insert(0, n?.text ?? '');
     }
     _quill = QuillController(
         document: doc, selection: const TextSelection.collapsed(offset: 0));
+    if (widget.photo) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _addImage());
+    } else if (widget.note == null) {
+      // Nieuwe notitie: meteen in de tekst beginnen.
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _focus.requestFocus());
+    }
   }
 
   @override
@@ -69,33 +175,43 @@ class _NoteEditorState extends State<_NoteEditor> {
     super.dispose();
   }
 
-  Future<void> _save() async {
+  String get _content => jsonEncode(_quill.document.toDelta().toJson());
+
+  /// Opslaan en sluiten. Lege notities zonder foto's worden niet bewaard.
+  Future<void> _save({SnackBar? after}) async {
     if (_saved) return;
     _saved = true;
-    final content = jsonEncode(_quill.document.toDelta().toJson());
+    final messenger = ScaffoldMessenger.of(context);
+    final content = _content;
     final plain = deltaToPlain(content);
     final title = _title.text.trim();
-    if (plain.trim().isEmpty && title.isEmpty) {
+    final images = store.noteImages(_id);
+    if (plain.trim().isEmpty && title.isEmpty && images.isEmpty) {
+      if (widget.note != null) {
+        await store.trashNote(widget.note!);
+        messenger.showSnackBar(
+            const SnackBar(content: Text('Lege notitie naar de prullenbak')));
+      }
       if (mounted) Navigator.pop(context);
       return;
     }
     final now = DateTime.now();
-    final n =
-        widget.note ?? Note(id: newId(), text: '', created: now, updated: now);
-    if (widget.note == null) {
-      // Nieuwe notitie bovenaan.
-      final all = store.notes;
-      n.order = all.isEmpty
-          ? 0
-          : all.map((x) => x.order).reduce((a, b) => a < b ? a : b) - 1;
-    }
+    final n = widget.note ?? Note(id: _id, text: '', created: now, updated: now);
+    if (widget.note == null) n.order = store.topOrder;
+    final changed = widget.note == null ||
+        n.title != title ||
+        n.content != content ||
+        n.tags.join(',') != _tags.join(',') ||
+        n.jobKey != _jobKey;
     n.title = title;
     n.content = content;
     n.text = plain;
     n.jobKey = _jobKey;
     n.jobTitle = store.job(_jobKey)?.title;
+    n.space = _jobKey != null ? 'work' : _space;
     n.lockscreen = _lock;
-    n.pinned = _pinned;
+    n.pinned = _pinned && !_archived;
+    n.archived = _archived;
     n.tags = List.of(_tags);
     if (_widget && !n.widget) {
       for (final o in store.notes.where((o) => o.widget && o.id != n.id)) {
@@ -104,8 +220,41 @@ class _NoteEditorState extends State<_NoteEditor> {
       }
     }
     n.widget = _widget;
-    await store.saveNote(n);
+    await store.saveNote(n, touch: changed);
+    if (after != null) messenger.showSnackBar(after);
     if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _addImage() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Foto maken'),
+              onTap: () => Navigator.pop(c, ImageSource.camera)),
+          ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Afbeelding kiezen'),
+              onTap: () => Navigator.pop(c, ImageSource.gallery)),
+        ]),
+      ),
+    );
+    if (source == null) return;
+    try {
+      final x = await ImagePicker()
+          .pickImage(source: source, maxWidth: 1800, imageQuality: 80);
+      if (x == null) return;
+      await store.addPhoto('note:$_id', await x.readAsBytes());
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Afbeelding toevoegen mislukt: $e')));
+      }
+    }
   }
 
   Future<void> _more() async {
@@ -130,9 +279,19 @@ class _NoteEditorState extends State<_NoteEditor> {
           jobs.insert(0, cur);
         }
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.label_outline),
+                title: const Text('Labels'),
+                subtitle: _tags.isEmpty ? null : Text(_tags.join(', ')),
+                onTap: () async {
+                  Navigator.pop(c);
+                  await _editTags();
+                },
+              ),
               DropdownButtonFormField<String?>(
                 initialValue: _jobKey,
                 isExpanded: true,
@@ -146,19 +305,29 @@ class _NoteEditorState extends State<_NoteEditor> {
                             '${dateShort(j.start)} · ${store.clientName(j)} · ${j.title}',
                             overflow: TextOverflow.ellipsis)),
                 ],
-                onChanged: (v) => both(() => _jobKey = v),
+                onChanged: (v) => both(() {
+                  _jobKey = v;
+                  if (v != null) _space = 'work';
+                }),
               ),
-              if (device.supported) ...[
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Op vergrendelscherm'),
-                  subtitle: const Text('Als vaste melding, tot je hem uitzet'),
-                  value: _lock,
-                  onChanged: (v) async {
-                    if (v && !await device.requestPermission()) return;
-                    both(() => _lock = v);
-                  },
-                ),
+              const SizedBox(height: 8),
+              if (_jobKey == null)
+                Row(children: [
+                  const Text('Omgeving'),
+                  const Spacer(),
+                  SegmentedButton<String>(
+                    segments: [
+                      for (final s in Store.spaces)
+                        ButtonSegment(value: s, label: Text(store.spaceName(s))),
+                    ],
+                    selected: {_space},
+                    onSelectionChanged: (v) => both(() => _space = v.first),
+                  ),
+                ])
+              else
+                Text('Klusnotities staan altijd in ${store.spaceName('work')}.',
+                    style: const TextStyle(color: muted, fontSize: 12)),
+              if (device.supported)
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Op widget'),
@@ -167,20 +336,65 @@ class _NoteEditorState extends State<_NoteEditor> {
                   value: _widget,
                   onChanged: (v) => both(() => _widget = v),
                 ),
-              ],
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.share_outlined),
+                title: const Text('Delen'),
+                onTap: () {
+                  Navigator.pop(c);
+                  final t = _title.text.trim();
+                  final body = deltaToPlain(_content);
+                  SharePlus.instance.share(ShareParams(
+                      text: t.isEmpty ? body : '$t\n\n$body',
+                      subject: t.isEmpty ? null : t));
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.copy_outlined),
+                title: const Text('Kopie maken'),
+                onTap: () async {
+                  Navigator.pop(c);
+                  final now = DateTime.now();
+                  final content = _content;
+                  await store.saveNote(Note(
+                    id: newId(),
+                    title: _title.text.trim(),
+                    text: deltaToPlain(content),
+                    content: content,
+                    jobKey: _jobKey,
+                    jobTitle: store.job(_jobKey)?.title,
+                    created: now,
+                    updated: now,
+                    tags: List.of(_tags),
+                    space: _space,
+                    order: store.topOrder,
+                  ));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Kopie gemaakt')));
+                  }
+                },
+              ),
               if (widget.note != null)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.delete_outline),
-                  title: const Text('Notitie verwijderen'),
+                  title: const Text('Verwijderen'),
+                  subtitle: const Text('Naar de prullenbak (7 dagen herstelbaar)'),
                   onTap: () async {
                     Navigator.pop(c);
-                    if (await confirm(context, 'Notitie verwijderen?',
-                        'Dit kan niet ongedaan worden gemaakt.')) {
-                      _saved = true;
-                      await store.deleteNote(widget.note!.id);
-                      if (mounted) Navigator.pop(context);
-                    }
+                    _saved = true;
+                    final messenger = ScaffoldMessenger.of(context);
+                    final n = widget.note!;
+                    await store.trashNote(n);
+                    messenger.showSnackBar(SnackBar(
+                      content: const Text('Notitie naar de prullenbak'),
+                      action: SnackBarAction(
+                          label: 'Ongedaan',
+                          onPressed: () => store.restoreNote(n)),
+                    ));
+                    if (mounted) Navigator.pop(context);
                   },
                 ),
             ]),
@@ -191,7 +405,8 @@ class _NoteEditorState extends State<_NoteEditor> {
   }
 
   Future<void> _editTags() async {
-    final r = await pickTags(context, selected: _tags.toSet());
+    final r = await pickTags(context,
+        selected: _tags.toSet(), space: _jobKey != null ? 'work' : _space);
     if (r != null) {
       setState(() => _tags
         ..clear()
@@ -202,107 +417,195 @@ class _NoteEditorState extends State<_NoteEditor> {
   @override
   Widget build(BuildContext context) {
     final job = store.job(_jobKey);
+    final images = store.noteImages(_id);
+    final updated = widget.note?.updated;
+    final primary = Theme.of(context).colorScheme.primary;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _save();
       },
       child: Scaffold(
+        backgroundColor: _cardColor,
         appBar: AppBar(
+          backgroundColor: _cardColor,
+          leading: IconButton(
+              tooltip: 'Opslaan en sluiten',
+              icon: const Icon(Icons.arrow_back),
+              onPressed: _save),
           actions: [
             IconButton(
               tooltip: _pinned ? 'Losmaken' : 'Vastzetten',
               icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
-              onPressed: () => setState(() => _pinned = !_pinned),
+              onPressed: () => setState(() {
+                _pinned = !_pinned;
+                if (_pinned) _archived = false;
+              }),
             ),
+            if (device.supported)
+              IconButton(
+                tooltip: _lock
+                    ? 'Van vergrendelscherm halen'
+                    : 'Op vergrendelscherm zetten',
+                icon: Icon(_lock ? Icons.lock : Icons.lock_outline,
+                    color: _lock ? primary : null),
+                onPressed: () async {
+                  if (!_lock && !await device.requestPermission()) return;
+                  setState(() => _lock = !_lock);
+                },
+              ),
             IconButton(
-                tooltip: 'Tags',
-                icon: const Icon(Icons.sell_outlined),
-                onPressed: _editTags),
-            IconButton(
-                tooltip: 'Meer',
-                icon: const Icon(Icons.more_vert),
-                onPressed: _more),
-            IconButton(
-                tooltip: 'Opslaan',
-                icon: const Icon(Icons.check),
-                onPressed: _save),
+              tooltip: _archived ? 'Uit archief halen' : 'Archiveren',
+              icon: Icon(_archived
+                  ? Icons.unarchive_outlined
+                  : Icons.archive_outlined),
+              onPressed: () {
+                final was = _archived;
+                setState(() {
+                  _archived = !_archived;
+                  if (_archived) _pinned = false;
+                });
+                _save(
+                    after: SnackBar(
+                        content: Text(was
+                            ? 'Notitie uit archief gehaald'
+                            : 'Notitie gearchiveerd')));
+              },
+            ),
           ],
         ),
         body: Column(children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _title,
-              textCapitalization: TextCapitalization.sentences,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
-              decoration: const InputDecoration(
-                hintText: 'Titel (optioneel)',
-                filled: false,
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          if (job != null || _tags.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(spacing: 6, runSpacing: 4, children: [
+          Expanded(
+            child: ListView(
+              controller: _scroll,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                if (images.isNotEmpty) ...[
+                  _ImageStrip(images: images, onChanged: () => setState(() {})),
+                  const SizedBox(height: 8),
+                ],
+                TextField(
+                  controller: _title,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w600),
+                  decoration: const InputDecoration(
+                    hintText: 'Titel',
+                    filled: false,
+                    border: InputBorder.none,
+                  ),
+                ),
+                QuillEditor(
+                  controller: _quill,
+                  focusNode: _focus,
+                  scrollController: ScrollController(),
+                  config: QuillEditorConfig(
+                    placeholder: 'Notitie',
+                    autoFocus: widget.note == null && !widget.photo,
+                    scrollable: false,
+                    expands: false,
+                    padding: EdgeInsets.zero,
+                    minHeight: 160,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(spacing: 6, runSpacing: 6, children: [
                   if (job != null)
-                    Chip(
-                      avatar: const Icon(Icons.event_note, size: 16),
+                    ActionChip(
+                      avatar: Icon(Icons.event_note, size: 16, color: primary),
                       label: Text('${store.clientName(job)} · ${job.title}'),
                       visualDensity: VisualDensity.compact,
+                      onPressed: () => openJob(context, job.key),
+                    ),
+                  if (job == null && store.notesSpace == 'all')
+                    Chip(
+                      label: Text(store.spaceName(_space)),
+                      visualDensity: VisualDensity.compact,
+                      side: BorderSide(color: spaceColor(_space)),
                     ),
                   for (final t in _tags)
                     InputChip(
-                      label: Text('#$t'),
+                      label: Text(t),
                       visualDensity: VisualDensity.compact,
+                      onPressed: _editTags,
                       onDeleted: () => setState(() => _tags.remove(t)),
                     ),
                 ]),
-              ),
-            ),
-          QuillSimpleToolbar(
-            controller: _quill,
-            config: const QuillSimpleToolbarConfig(
-              multiRowsDisplay: false,
-              showDividers: false,
-              showFontFamily: false,
-              showFontSize: false,
-              showSmallButton: false,
-              showStrikeThrough: false,
-              showInlineCode: false,
-              showColorButton: false,
-              showBackgroundColorButton: false,
-              showClearFormat: false,
-              showAlignmentButtons: false,
-              showHeaderStyle: false,
-              showCodeBlock: false,
-              showQuote: false,
-              showIndent: false,
-              showLink: false,
-              showSearchButton: false,
-              showSubscript: false,
-              showSuperscript: false,
+              ],
             ),
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: QuillEditor(
-                controller: _quill,
-                focusNode: _focus,
-                scrollController: _scroll,
-                config: QuillEditorConfig(
-                  placeholder: 'Patch, IP-adressen, afspraken, spare parts…',
-                  autoFocus: widget.note == null,
-                  expands: true,
-                  padding: EdgeInsets.zero,
-                ),
+          if (_format)
+            QuillSimpleToolbar(
+              controller: _quill,
+              config: const QuillSimpleToolbarConfig(
+                multiRowsDisplay: false,
+                showDividers: false,
+                showFontFamily: false,
+                showFontSize: false,
+                showSmallButton: false,
+                showStrikeThrough: false,
+                showInlineCode: false,
+                showColorButton: false,
+                showBackgroundColorButton: false,
+                showClearFormat: false,
+                showAlignmentButtons: false,
+                showHeaderStyle: false,
+                showCodeBlock: false,
+                showQuote: false,
+                showIndent: false,
+                showLink: false,
+                showSearchButton: false,
+                showSubscript: false,
+                showSuperscript: false,
+                showUndo: false,
+                showRedo: false,
               ),
+            ),
+          SafeArea(
+            top: false,
+            child: Container(
+              decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: _line))),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(children: [
+                IconButton(
+                    tooltip: 'Afbeelding toevoegen',
+                    icon: const Icon(Icons.add_box_outlined),
+                    onPressed: _addImage),
+                IconButton(
+                    tooltip: 'Opmaak',
+                    isSelected: _format,
+                    icon: const Icon(Icons.text_format),
+                    onPressed: () => setState(() => _format = !_format)),
+                IconButton(
+                    tooltip: 'Checklist',
+                    icon: const Icon(Icons.check_box_outlined),
+                    onPressed: () {
+                      final isList = _quill
+                              .getSelectionStyle()
+                              .attributes['list']
+                              ?.value !=
+                          null;
+                      _quill.formatSelection(isList
+                          ? Attribute.clone(Attribute.unchecked, null)
+                          : Attribute.unchecked);
+                    }),
+                Expanded(
+                  child: Text(
+                    updated == null
+                        ? ''
+                        : sameDay(updated, DateTime.now())
+                            ? 'Bewerkt ${hm(updated)}'
+                            : 'Bewerkt ${dateShort(updated)}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: muted, fontSize: 12),
+                  ),
+                ),
+                IconButton(
+                    tooltip: 'Meer',
+                    icon: const Icon(Icons.more_vert),
+                    onPressed: _more),
+              ]),
             ),
           ),
         ]),
@@ -311,11 +614,69 @@ class _NoteEditorState extends State<_NoteEditor> {
   }
 }
 
-// ============================================================ Tags kiezen
+/// Afbeeldingen bovenaan een notitie.
+class _ImageStrip extends StatelessWidget {
+  final List<Photo> images;
+  final VoidCallback onChanged;
+  const _ImageStrip({required this.images, required this.onChanged});
 
-/// Laat tags kiezen en nieuwe aanmaken. Geeft null bij annuleren.
+  @override
+  Widget build(BuildContext context) {
+    Widget img(Photo p, {double? h}) => GestureDetector(
+          onTap: () async {
+            await Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => _NoteImageView(photo: p)));
+            onChanged();
+          },
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.memory(p.bytes,
+                height: h, width: double.infinity, fit: BoxFit.cover),
+          ),
+        );
+    if (images.length == 1) return img(images.first, h: 220);
+    return SizedBox(
+      height: 140,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: images.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        itemBuilder: (_, i) => SizedBox(width: 160, child: img(images[i])),
+      ),
+    );
+  }
+}
+
+class _NoteImageView extends StatelessWidget {
+  final Photo photo;
+  const _NoteImageView({required this.photo});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(backgroundColor: Colors.black, actions: [
+          IconButton(
+            tooltip: 'Afbeelding verwijderen',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              if (await confirm(context, 'Afbeelding verwijderen?',
+                  'De afbeelding wordt uit de notitie verwijderd.')) {
+                await store.deletePhoto(photo.id);
+                if (context.mounted) Navigator.pop(context);
+              }
+            },
+          ),
+        ]),
+        body: InteractiveViewer(
+            maxScale: 8, child: Center(child: Image.memory(photo.bytes))),
+      );
+}
+
+// ============================================================ Labels kiezen
+
+/// Laat labels kiezen en nieuwe aanmaken. Geeft null bij annuleren.
 Future<Set<String>?> pickTags(BuildContext context,
-    {Set<String> selected = const {}}) {
+    {Set<String> selected = const {}, String space = 'work'}) {
   final sel = {...selected};
   final ctrl = TextEditingController();
   return showModalBottomSheet<Set<String>>(
@@ -323,11 +684,11 @@ Future<Set<String>?> pickTags(BuildContext context,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (c) => StatefulBuilder(builder: (c, setS) {
-      final tags = {...store.allTags, ...sel}.toList()..sort();
+      final tags = {...store.tagsIn(space), ...sel}.toList()..sort();
       void add() {
         final t = ctrl.text.trim().replaceAll('#', '');
         if (t.isEmpty) return;
-        store.addTag(t);
+        store.addTag(t, space: space == 'all' ? 'work' : space);
         setS(() {
           sel.add(t);
           ctrl.clear();
@@ -338,7 +699,7 @@ Future<Set<String>?> pickTags(BuildContext context,
         padding: EdgeInsets.fromLTRB(
             16, 0, 16, 16 + MediaQuery.viewInsetsOf(c).bottom),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Tags',
+          const Text('Labels',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           Row(children: [
@@ -346,7 +707,7 @@ Future<Set<String>?> pickTags(BuildContext context,
               child: TextField(
                 controller: ctrl,
                 decoration: const InputDecoration(
-                    hintText: 'Nieuwe tag, bijv. LED of Barco', isDense: true),
+                    hintText: 'Nieuw label, bijv. LED of Barco', isDense: true),
                 onSubmitted: (_) => add(),
               ),
             ),
@@ -356,7 +717,7 @@ Future<Set<String>?> pickTags(BuildContext context,
           Wrap(spacing: 6, runSpacing: 6, children: [
             for (final t in tags)
               FilterChip(
-                label: Text('#$t'),
+                label: Text(t),
                 selected: sel.contains(t),
                 onSelected: (v) => setS(() => v ? sel.add(t) : sel.remove(t)),
               ),
@@ -376,9 +737,108 @@ Future<Set<String>?> pickTags(BuildContext context,
   );
 }
 
+/// Labels hernoemen, verwijderen en toevoegen.
+Future<void> editLabels(BuildContext context, String space) async {
+  final ctrl = TextEditingController();
+  final target = space == 'all' ? 'work' : space;
+  await showDialog(
+    context: context,
+    builder: (c) => StatefulBuilder(builder: (c, setS) {
+      final tags = store.tagsIn(space);
+      return AlertDialog(
+        title: const Text('Labels bewerken'),
+        content: SizedBox(
+          width: 360,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: ctrl,
+                  decoration: const InputDecoration(
+                      hintText: 'Nieuw label', isDense: true),
+                  onSubmitted: (v) async {
+                    if (v.trim().isEmpty) return;
+                    await store.addTag(v.trim(), space: target);
+                    ctrl.clear();
+                    setS(() {});
+                  },
+                ),
+              ),
+              IconButton(
+                  icon: const Icon(Icons.check),
+                  onPressed: () async {
+                    if (ctrl.text.trim().isEmpty) return;
+                    await store.addTag(ctrl.text.trim(), space: target);
+                    ctrl.clear();
+                    setS(() {});
+                  }),
+            ]),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView(shrinkWrap: true, children: [
+                for (final t in tags)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.label_outline),
+                    title: Text(t),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        tooltip: 'Hernoemen',
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: () async {
+                          final r = TextEditingController(text: t);
+                          final name = await showDialog<String>(
+                            context: c,
+                            builder: (d) => AlertDialog(
+                              title: const Text('Label hernoemen'),
+                              content: TextField(controller: r, autofocus: true),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(d),
+                                    child: const Text('Annuleren')),
+                                FilledButton(
+                                    onPressed: () =>
+                                        Navigator.pop(d, r.text.trim()),
+                                    child: const Text('Opslaan')),
+                              ],
+                            ),
+                          );
+                          if (name != null && name.isNotEmpty && name != t) {
+                            await store.renameTag(t, name, space: space);
+                            setS(() {});
+                          }
+                        },
+                      ),
+                      IconButton(
+                        tooltip: 'Verwijderen',
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () async {
+                          if (await confirm(c, 'Label "$t" verwijderen?',
+                              'Het label wordt van alle notities gehaald. De notities zelf blijven bestaan.')) {
+                            await store.removeTag(t, space: space);
+                            setS(() {});
+                          }
+                        },
+                      ),
+                    ]),
+                  ),
+              ]),
+            ),
+          ]),
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(c), child: const Text('Klaar')),
+        ],
+      );
+    }),
+  );
+}
+
 // ============================================================ Overzicht
 
-/// Filters bovenaan de notitielijst: 'all', 'loose', 'jobs', 'past' of '#tag'.
+/// Weergaven: 'notes', 'jobs', 'past', 'loose', '#label', 'archive', 'trash'.
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
 
@@ -387,59 +847,178 @@ class NotesScreen extends StatefulWidget {
 }
 
 class _NotesScreenState extends State<NotesScreen> {
+  final _scaffold = GlobalKey<ScaffoldState>();
+  final _search = TextEditingController();
+  late final AppLifecycleListener _life;
   String _q = '';
-  String _filter = 'all';
+  String _view = 'notes';
+  late String _space = store.notesSpace;
   final _selected = <String>{};
 
   bool get _selecting => _selected.isNotEmpty;
+  bool get _needsPin =>
+      _space != 'work' && store.privatePin != null && !privateUnlocked;
+
+  @override
+  void initState() {
+    super.initState();
+    // Privé weer op slot zodra de app naar de achtergrond gaat.
+    _life = AppLifecycleListener(onHide: () {
+      if (store.privatePin != null) {
+        privateUnlocked = false;
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _life.dispose();
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _setSpace(String s) async {
+    if (s != 'work' && !await unlockPrivate(context)) return;
+    await store.setNotesSpace(s);
+    setState(() {
+      _space = s;
+      _selected.clear();
+      if (_view.startsWith('#')) _view = 'notes';
+    });
+  }
+
+  /// Omgeving voor nieuwe notities.
+  String get _newSpace => _space == 'all' ? 'work' : _space;
+
+  bool _inSpace(Note n) => _space == 'all' || n.space == _space;
 
   bool _matches(Note n) {
+    final q = _q.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      // Zoeken gaat door alles in de omgeving, ook het archief.
+      return _inSpace(n) &&
+          (n.title.toLowerCase().contains(q) ||
+              n.text.toLowerCase().contains(q) ||
+              (n.jobTitle ?? '').toLowerCase().contains(q) ||
+              n.tags.any((t) => t.toLowerCase().contains(q)));
+    }
+    if (!_inSpace(n)) return false;
     final now = DateTime.now();
     final j = store.job(n.jobKey);
-    final ok = switch (_filter) {
-      'all' => true,
-      'loose' => n.jobKey == null,
-      'jobs' => j != null && !j.end.isBefore(now),
-      'past' => j != null && j.end.isBefore(now),
-      _ => n.tags.contains(_filter.substring(1)),
+    return switch (_view) {
+      'archive' => n.archived,
+      'notes' => !n.archived,
+      'loose' => !n.archived && n.jobKey == null,
+      'jobs' => !n.archived && j != null && !j.end.isBefore(now),
+      'past' => !n.archived && j != null && j.end.isBefore(now),
+      _ => !n.archived && n.tags.contains(_view.substring(1)),
     };
-    if (!ok) return false;
-    final q = _q.toLowerCase();
-    return q.isEmpty ||
-        n.title.toLowerCase().contains(q) ||
-        n.text.toLowerCase().contains(q) ||
-        (n.jobTitle ?? '').toLowerCase().contains(q) ||
-        n.tags.any((t) => t.toLowerCase().contains(q));
   }
 
-  Future<void> _deleteSelected() async {
-    final n = _selected.length;
-    if (!await confirm(context, '$n notitie(s) verwijderen?',
-        'Dit kan niet ongedaan worden gemaakt.')) {
-      return;
-    }
-    for (final id in _selected.toList()) {
-      await store.deleteNote(id);
-    }
-    setState(_selected.clear);
-  }
+  List<Note> get _shown => _view == 'trash'
+      ? store.trashedNotes.where(_inSpace).toList()
+      : store.notes.where(_matches).toList();
+
+  String get _title => switch (_view) {
+        'notes' => 'Notities',
+        'jobs' => 'Bij klussen',
+        'past' => 'Afgelopen klussen',
+        'loose' => 'Losse notities',
+        'archive' => 'Archief',
+        'trash' => 'Prullenbak',
+        _ => _view.substring(1),
+      };
+
+  List<Note> get _selectedNotes => [
+        ...store.notes,
+        ...store.trashedNotes
+      ].where((n) => _selected.contains(n.id)).toList();
+
+  void _toggle(Note n) => setState(() =>
+      _selected.contains(n.id) ? _selected.remove(n.id) : _selected.add(n.id));
 
   Future<void> _pinSelected() async {
-    final notes = store.notes.where((n) => _selected.contains(n.id)).toList();
+    final notes = _selectedNotes;
     final pin = notes.any((n) => !n.pinned);
     for (final n in notes) {
       n.pinned = pin;
+      if (pin) n.archived = false;
       await store.saveNote(n, touch: false);
     }
     setState(_selected.clear);
   }
 
+  Future<void> _archiveSelected(bool archive) async {
+    final notes = _selectedNotes;
+    for (final n in notes) {
+      n.archived = archive;
+      if (archive) n.pinned = false;
+      await store.saveNote(n, touch: false);
+    }
+    setState(_selected.clear);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(archive
+            ? '${notes.length} notitie(s) gearchiveerd'
+            : '${notes.length} notitie(s) uit archief gehaald'),
+        action: SnackBarAction(
+            label: 'Ongedaan',
+            onPressed: () async {
+              for (final n in notes) {
+                n.archived = !archive;
+                await store.saveNote(n, touch: false);
+              }
+            }),
+      ));
+    }
+  }
+
+  Future<void> _trashSelected() async {
+    final notes = _selectedNotes;
+    for (final n in notes) {
+      await store.trashNote(n);
+    }
+    setState(_selected.clear);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${notes.length} notitie(s) naar de prullenbak'),
+        action: SnackBarAction(
+            label: 'Ongedaan',
+            onPressed: () async {
+              for (final n in notes) {
+                await store.restoreNote(n);
+              }
+            }),
+      ));
+    }
+  }
+
+  Future<void> _restoreSelected() async {
+    for (final n in _selectedNotes) {
+      await store.restoreNote(n);
+    }
+    setState(_selected.clear);
+  }
+
+  Future<void> _purgeSelected() async {
+    final ids = _selected.toList();
+    if (!await confirm(context, '${ids.length} notitie(s) definitief verwijderen?',
+        'Dit kan niet ongedaan worden gemaakt.')) {
+      return;
+    }
+    for (final id in ids) {
+      await store.purgeNote(id);
+    }
+    setState(_selected.clear);
+  }
+
   Future<void> _tagSelected() async {
-    final notes = store.notes.where((n) => _selected.contains(n.id)).toList();
+    final notes = _selectedNotes;
     final common = notes.isEmpty
         ? <String>{}
         : notes.map((n) => n.tags.toSet()).reduce((a, b) => a.intersection(b));
-    final r = await pickTags(context, selected: common);
+    final r = await pickTags(context, selected: common, space: _space);
     if (r == null) return;
     final removed = common.difference(r);
     for (final n in notes) {
@@ -449,7 +1028,7 @@ class _NotesScreenState extends State<NotesScreen> {
     setState(_selected.clear);
   }
 
-  /// Gesleepte notitie(s) op een tag losgelaten.
+  /// Gesleepte notitie(s) op een label in het zijmenu losgelaten.
   Future<void> _dropOnTag(String id, String tag) async {
     final ids = {..._selected, id};
     for (final n in store.notes.where((n) => ids.contains(n.id))) {
@@ -460,329 +1039,781 @@ class _NotesScreenState extends State<NotesScreen> {
     }
     setState(_selected.clear);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('${ids.length} notitie(s) getagd met #$tag')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${ids.length} notitie(s) gelabeld met $tag')));
     }
   }
 
-  Future<void> _reorder(List<Note> shown, int oldIndex, int newIndex) async {
-    if (newIndex > oldIndex) newIndex--;
-    if (newIndex == oldIndex) return;
-    final moved = shown.removeAt(oldIndex);
-    shown.insert(newIndex, moved);
-    final before = newIndex > 0 ? shown[newIndex - 1] : null;
-    final after = newIndex < shown.length - 1 ? shown[newIndex + 1] : null;
-    if (before == null && after == null) return;
+  /// Gesleepte notitie vóór [target] zetten.
+  Future<void> _moveBefore(String id, Note target, List<Note> shown) async {
+    if (id == target.id) return;
+    final moved = store.note(id);
+    if (moved == null) return;
+    final list = shown.where((n) => n.id != id).toList();
+    final i = list.indexWhere((n) => n.id == target.id);
+    if (i < 0) return;
+    final before = i > 0 ? list[i - 1] : null;
     moved.order = before == null
-        ? after!.order - 1
-        : after == null
-            ? before.order + 1
-            : (before.order + after.order) / 2;
-    // Slepen tussen vastgezette notities zet hem vast, en andersom.
-    moved.pinned = before?.pinned ?? after!.pinned;
+        ? target.order - 1
+        : (before.order + target.order) / 2;
+    moved.pinned = target.pinned;
     await store.saveNote(moved, touch: false);
+    setState(_selected.clear);
   }
 
-  Widget _chip(String label, String f, {IconData? icon}) {
-    final chip = ChoiceChip(
-      avatar: icon == null ? null : Icon(icon, size: 16),
-      label: Text(label),
-      selected: _filter == f,
-      onSelected: (_) => setState(() => _filter = f),
-    );
-    if (!f.startsWith('#')) return chip;
-    final tag = f.substring(1);
-    // Notities op een tag slepen om ze die tag te geven.
-    return DragTarget<String>(
-      onAcceptWithDetails: (d) => _dropOnTag(d.data, tag),
-      builder: (c, cand, _) => AnimatedScale(
-        scale: cand.isEmpty ? 1 : 1.15,
-        duration: const Duration(milliseconds: 120),
-        child: GestureDetector(
-          onLongPress: () async {
-            if (await confirm(context, 'Tag #$tag verwijderen?',
-                'De tag wordt van alle notities gehaald. De notities zelf blijven bestaan.')) {
-              await store.removeTag(tag);
-              if (_filter == f) setState(() => _filter = 'all');
-            }
-          },
-          child: chip,
+  void _openNote(Note n) {
+    if (_selecting) {
+      _toggle(n);
+      return;
+    }
+    if (n.trashed != null) {
+      showModalBottomSheet(
+        context: context,
+        showDragHandle: true,
+        builder: (c) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(n.heading,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.restore_from_trash_outlined),
+              title: const Text('Herstellen'),
+              onTap: () {
+                Navigator.pop(c);
+                store.restoreNote(n);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_forever_outlined),
+              title: const Text('Definitief verwijderen'),
+              onTap: () async {
+                Navigator.pop(c);
+                if (await confirm(context, 'Definitief verwijderen?',
+                    'Dit kan niet ongedaan worden gemaakt.')) {
+                  await store.purgeNote(n.id);
+                }
+              },
+            ),
+          ]),
         ),
+      );
+      return;
+    }
+    editNote(context, note: n);
+  }
+
+  void _new({bool checklist = false, bool photo = false}) => editNote(context,
+      tag: _view.startsWith('#') ? _view.substring(1) : null,
+      space: _newSpace,
+      checklist: checklist,
+      photo: photo);
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 1000;
+    return StoreBuilder(builder: (context) {
+      final menu = _Menu(
+        space: _space,
+        view: _view,
+        wide: wide,
+        onSpace: (s) {
+          if (!wide) Navigator.pop(context);
+          _setSpace(s);
+        },
+        onView: (v) {
+          if (!wide) Navigator.pop(context);
+          setState(() {
+            _view = v;
+            _selected.clear();
+            _q = '';
+            _search.clear();
+          });
+        },
+        onDropTag: _dropOnTag,
+      );
+      final canCreate =
+          !_needsPin && _view != 'trash' && _view != 'archive' && !_selecting;
+      return Scaffold(
+        key: _scaffold,
+        drawer: wide ? null : Drawer(backgroundColor: _cardColor, child: menu),
+        bottomNavigationBar: !wide && canCreate
+            ? _CreateBar(onTap: _new, bottom: true)
+            : null,
+        body: SafeArea(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (wide) SizedBox(width: 260, child: menu),
+            Expanded(child: _content(wide, canCreate)),
+          ]),
+        ),
+      );
+    });
+  }
+
+  Widget _content(bool wide, bool canCreate) {
+    if (_needsPin) {
+      return Column(children: [
+        _topBar(wide),
+        Expanded(
+          child: EmptyHint(
+            icon: Icons.lock_outline,
+            title: '${store.spaceName('private')} is vergrendeld',
+            body: 'Voer je pincode in om deze notities te zien.',
+            action: FilledButton.icon(
+              onPressed: () async {
+                if (await unlockPrivate(context)) setState(() {});
+              },
+              icon: const Icon(Icons.lock_open),
+              label: const Text('Ontgrendelen'),
+            ),
+          ),
+        ),
+      ]);
+    }
+    final shown = _shown;
+    final searching = _q.trim().isNotEmpty;
+    final sections = <(String?, List<Note>)>[];
+    if (!searching && _view != 'trash' && _view != 'archive') {
+      final pinned = shown.where((n) => n.pinned).toList();
+      final other = shown.where((n) => !n.pinned).toList();
+      if (pinned.isNotEmpty) {
+        sections.add(('Vastgezet', pinned));
+        if (other.isNotEmpty) sections.add(('Overige', other));
+      } else {
+        sections.add((null, other));
+      }
+    } else {
+      sections.add((null, shown));
+    }
+
+    return LayoutBuilder(builder: (context, box) {
+      final grid = store.notesGrid;
+      final cols = grid ? (box.maxWidth / 250).floor().clamp(2, 5) : 1;
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          _topBar(wide),
+          if (wide && canCreate)
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  child: _CreateBar(onTap: _new),
+                ),
+              ),
+            ),
+          if (_view == 'trash')
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(children: [
+                const Expanded(
+                  child: Text(
+                      'Notities in de prullenbak worden na 7 dagen definitief verwijderd.',
+                      style: TextStyle(color: muted)),
+                ),
+                if (shown.isNotEmpty)
+                  TextButton(
+                    onPressed: () async {
+                      if (await confirm(context, 'Prullenbak leegmaken?',
+                          '${shown.length} notitie(s) worden definitief verwijderd.')) {
+                        for (final n in shown) {
+                          await store.purgeNote(n.id);
+                        }
+                      }
+                    },
+                    child: const Text('Prullenbak leegmaken'),
+                  ),
+              ]),
+            ),
+          if (shown.isEmpty)
+            EmptyHint(
+              icon: switch (_view) {
+                'archive' => Icons.archive_outlined,
+                'trash' => Icons.delete_outline,
+                _ => Icons.lightbulb_outline,
+              },
+              title: searching
+                  ? 'Niets gevonden'
+                  : switch (_view) {
+                      'archive' => 'Geen gearchiveerde notities',
+                      'trash' => 'De prullenbak is leeg',
+                      _ => 'Hier komen je notities',
+                    },
+              body: searching
+                  ? 'Probeer een ander woord.'
+                  : _view == 'trash' || _view == 'archive'
+                      ? ''
+                      : 'Maak een notitie met "Notitie maken". Houd een notitie vast '
+                          'om te selecteren of te verslepen.',
+            ),
+          for (final sec in sections) ...[
+            if (sec.$1 != null && sec.$2.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 16, 6),
+                child: Text(sec.$1!.toUpperCase(),
+                    style: const TextStyle(
+                        color: muted, fontSize: 11, letterSpacing: 0.8)),
+              ),
+            if (sec.$2.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: _Masonry(
+                  columns: cols,
+                  width: box.maxWidth - 20,
+                  notes: sec.$2,
+                  builder: (n, w) => _draggable(n, w, shown),
+                ),
+              ),
+          ],
+        ],
+      );
+    });
+  }
+
+  Widget _topBar(bool wide) {
+    if (_selecting) {
+      final inTrash = _view == 'trash';
+      final allArchived = _selectedNotes.every((n) => n.archived);
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: Row(children: [
+          IconButton(
+              tooltip: 'Klaar',
+              icon: const Icon(Icons.close),
+              onPressed: () => setState(_selected.clear)),
+          Expanded(
+              child: Text('${_selected.length}',
+                  style: const TextStyle(fontSize: 18))),
+          if (inTrash) ...[
+            IconButton(
+                tooltip: 'Herstellen',
+                icon: const Icon(Icons.restore_from_trash_outlined),
+                onPressed: _restoreSelected),
+            IconButton(
+                tooltip: 'Definitief verwijderen',
+                icon: const Icon(Icons.delete_forever_outlined),
+                onPressed: _purgeSelected),
+          ] else ...[
+            IconButton(
+                tooltip: 'Vastzetten / losmaken',
+                icon: const Icon(Icons.push_pin_outlined),
+                onPressed: _pinSelected),
+            IconButton(
+                tooltip: 'Labels',
+                icon: const Icon(Icons.label_outline),
+                onPressed: _tagSelected),
+            IconButton(
+                tooltip: allArchived ? 'Uit archief halen' : 'Archiveren',
+                icon: Icon(allArchived
+                    ? Icons.unarchive_outlined
+                    : Icons.archive_outlined),
+                onPressed: () => _archiveSelected(!allArchived)),
+            IconButton(
+                tooltip: 'Verwijderen',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: _trashSelected),
+          ],
+        ]),
+      );
+    }
+    final accent = _space == 'all'
+        ? Theme.of(context).colorScheme.primary
+        : spaceColor(_space);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: _cardColor,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(children: [
+          if (!wide)
+            IconButton(
+                tooltip: 'Menu',
+                icon: const Icon(Icons.menu),
+                onPressed: () => _scaffold.currentState?.openDrawer())
+          else
+            const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Icon(Icons.search, color: muted)),
+          Expanded(
+            child: TextField(
+              controller: _search,
+              decoration: InputDecoration(
+                hintText: _view == 'notes'
+                    ? 'Zoeken in ${_space == 'all' ? 'alle notities' : store.spaceName(_space)}'
+                    : '$_title · zoeken',
+                filled: false,
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() => _q = v),
+            ),
+          ),
+          if (_q.isNotEmpty)
+            IconButton(
+                tooltip: 'Wissen',
+                icon: const Icon(Icons.close),
+                onPressed: () => setState(() {
+                      _q = '';
+                      _search.clear();
+                    })),
+          IconButton(
+            tooltip: store.notesGrid ? 'Lijstweergave' : 'Rasterweergave',
+            icon: Icon(store.notesGrid
+                ? Icons.view_agenda_outlined
+                : Icons.grid_view_outlined),
+            onPressed: () => store.setNotesGrid(!store.notesGrid),
+          ),
+          // Omgeving in één oogopslag; tikken = wisselen.
+          Tooltip(
+            message: 'Omgeving wisselen',
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => _setSpace(switch (_space) {
+                'work' => 'private',
+                'private' => 'all',
+                _ => 'work',
+              }),
+              child: CircleAvatar(
+                radius: 15,
+                backgroundColor: accent.withValues(alpha: 0.25),
+                child: Text(
+                  _space == 'all'
+                      ? '∗'
+                      : store.spaceName(_space).characters.first.toUpperCase(),
+                  style: TextStyle(
+                      color: accent, fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+              ),
+            ),
+          ),
+          const SettingsAction(),
+        ]),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return StoreBuilder(builder: (context) {
-      final shown = store.notes.where(_matches).toList();
-      final tags = store.allTags;
-      return Scaffold(
-        appBar: _selecting
-            ? AppBar(
-                leading: IconButton(
-                    tooltip: 'Klaar',
-                    icon: const Icon(Icons.close),
-                    onPressed: () => setState(_selected.clear)),
-                title: Text('${_selected.length} geselecteerd'),
-                actions: [
-                  IconButton(
-                      tooltip: 'Alles selecteren',
-                      icon: const Icon(Icons.select_all),
-                      onPressed: () => setState(
-                          () => _selected.addAll(shown.map((n) => n.id)))),
-                  IconButton(
-                      tooltip: 'Vastzetten / losmaken',
-                      icon: const Icon(Icons.push_pin_outlined),
-                      onPressed: _pinSelected),
-                  IconButton(
-                      tooltip: 'Tags',
-                      icon: const Icon(Icons.sell_outlined),
-                      onPressed: _tagSelected),
-                  IconButton(
-                      tooltip: 'Verwijderen',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: _deleteSelected),
-                ],
-              )
-            : AppBar(title: const Text('Notities'), actions: [
-                IconButton(
-                    tooltip: 'Selecteren',
-                    icon: const Icon(Icons.checklist),
-                    onPressed: shown.isEmpty
-                        ? null
-                        : () => setState(() => _selected.add(shown.first.id))),
-                const SettingsAction(),
-              ]),
-        floatingActionButton: _selecting
-            ? null
-            : FloatingActionButton(
-                tooltip: 'Nieuwe notitie',
-                onPressed: () => editNote(context,
-                    tag: _filter.startsWith('#') ? _filter.substring(1) : null),
-                child: const Icon(Icons.add),
-              ),
-        body: Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: TextField(
-              decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Zoeken',
-                  isDense: true),
-              onChanged: (v) => setState(() => _q = v),
+  Widget _draggable(Note n, double width, List<Note> shown) {
+    final card = NoteCard(
+      note: n,
+      selected: _selected.contains(n.id),
+      showSpace: _space == 'all',
+      onTap: () => _openNote(n),
+    );
+    if (n.trashed != null) {
+      return GestureDetector(onLongPress: () => _toggle(n), child: card);
+    }
+    // Lang indrukken = selecteren; meteen slepen = verplaatsen of op label leggen.
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (d) => d.data != n.id,
+      onAcceptWithDetails: (d) => _moveBefore(d.data, n, shown),
+      builder: (context, cand, _) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: EdgeInsets.only(top: cand.isEmpty ? 0 : 24),
+        child: LongPressDraggable<String>(
+          data: n.id,
+          onDragStarted: () {
+            HapticFeedback.selectionClick();
+            setState(() => _selected.add(n.id));
+          },
+          feedback: Material(
+            color: Colors.transparent,
+            child: SizedBox(
+              width: width,
+              child: Opacity(opacity: 0.9, child: card),
             ),
           ),
-          SizedBox(
-            height: 44,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                for (final w in [
-                  _chip('Alle', 'all'),
-                  _chip('Los', 'loose', icon: Icons.notes),
-                  _chip('Klussen', 'jobs', icon: Icons.event_note),
-                  _chip('Afgelopen klussen', 'past',
-                      icon: Icons.inventory_2_outlined),
-                  for (final t in tags) _chip('#$t', '#$t'),
-                  ActionChip(
-                    avatar: const Icon(Icons.add, size: 16),
-                    label: const Text('Tag'),
-                    onPressed: () async {
-                      await pickTags(context);
-                      setState(() {});
-                    },
-                  ),
-                ])
-                  Padding(padding: const EdgeInsets.only(right: 6), child: w),
-              ],
-            ),
-          ),
-          Expanded(
-            child: shown.isEmpty
-                ? ListView(children: const [
-                    EmptyHint(
-                        icon: Icons.sticky_note_2_outlined,
-                        title: 'Geen notities',
-                        body:
-                            'Maak een notitie met de +. Houd een notitie vast om te selecteren '
-                            'of hem op een tag te slepen; met ≡ verander je de volgorde.'),
-                  ])
-                : ReorderableListView.builder(
-                    buildDefaultDragHandles: false,
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
-                    itemCount: shown.length,
-                    onReorder: (o, n) => _reorder(List.of(shown), o, n),
-                    itemBuilder: (context, i) {
-                      final n = shown[i];
-                      return _NoteTile(
-                        key: ValueKey(n.id),
-                        note: n,
-                        index: i,
-                        selected: _selected.contains(n.id),
-                        selecting: _selecting,
-                        dragCount: _selected.isEmpty
-                            ? 1
-                            : {..._selected, n.id}.length,
-                        onTap: () {
-                          if (_selecting) {
-                            setState(() => _selected.contains(n.id)
-                                ? _selected.remove(n.id)
-                                : _selected.add(n.id));
-                          } else {
-                            editNote(context, note: n);
-                          }
-                        },
-                        onDragStart: () => setState(() => _selected.add(n.id)),
-                      );
-                    },
-                  ),
-          ),
-        ]),
-      );
-    });
+          childWhenDragging: Opacity(opacity: 0.3, child: card),
+          child: card,
+        ),
+      ),
+    );
   }
 }
 
-class _NoteTile extends StatelessWidget {
-  final Note note;
-  final int index;
-  final bool selected;
-  final bool selecting;
-  final int dragCount;
-  final VoidCallback onTap;
-  final VoidCallback onDragStart;
+/// "Notitie maken…" met snelknoppen voor checklist en afbeelding.
+class _CreateBar extends StatelessWidget {
+  final void Function({bool checklist, bool photo}) onTap;
+  final bool bottom;
+  const _CreateBar({required this.onTap, this.bottom = false});
 
-  const _NoteTile({
-    super.key,
-    required this.note,
-    required this.index,
-    required this.selected,
-    required this.selecting,
-    required this.dragCount,
-    required this.onTap,
-    required this.onDragStart,
-  });
+  @override
+  Widget build(BuildContext context) {
+    final bar = Material(
+      color: _cardColor,
+      borderRadius: BorderRadius.circular(bottom ? 0 : 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(bottom ? 0 : 12),
+        onTap: () => onTap(),
+        child: Container(
+          height: 52,
+          padding: const EdgeInsets.only(left: 16),
+          decoration: bottom
+              ? const BoxDecoration(border: Border(top: BorderSide(color: _line)))
+              : BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _line)),
+          child: Row(children: [
+            const Expanded(
+                child: Text('Notitie maken…',
+                    style: TextStyle(color: muted, fontSize: 15))),
+            IconButton(
+                tooltip: 'Nieuwe checklist',
+                icon: const Icon(Icons.check_box_outlined),
+                onPressed: () => onTap(checklist: true)),
+            IconButton(
+                tooltip: 'Nieuwe notitie met afbeelding',
+                icon: const Icon(Icons.image_outlined),
+                onPressed: () => onTap(photo: true)),
+            const SizedBox(width: 4),
+          ]),
+        ),
+      ),
+    );
+    return bottom ? SafeArea(top: false, child: bar) : bar;
+  }
+}
+
+/// Zijmenu: omgeving, weergaven, labels, archief en prullenbak.
+class _Menu extends StatelessWidget {
+  final String space;
+  final String view;
+  final bool wide;
+  final ValueChanged<String> onSpace;
+  final ValueChanged<String> onView;
+  final Future<void> Function(String id, String tag) onDropTag;
+  const _Menu(
+      {required this.space,
+      required this.view,
+      required this.wide,
+      required this.onSpace,
+      required this.onView,
+      required this.onDropTag});
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final accent = space == 'all' ? primary : spaceColor(space);
+    final tags = store.tagsIn(space);
+
+    Widget item(IconData icon, String label, String v) {
+      final sel = view == v;
+      return Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: Material(
+          color: sel ? accent.withValues(alpha: 0.2) : Colors.transparent,
+          borderRadius:
+              const BorderRadius.horizontal(right: Radius.circular(24)),
+          child: InkWell(
+            borderRadius:
+                const BorderRadius.horizontal(right: Radius.circular(24)),
+            onTap: () => onView(v),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+              child: Row(children: [
+                Icon(icon, size: 22, color: sel ? accent : null),
+                const SizedBox(width: 18),
+                Expanded(
+                    child: Text(label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontWeight: sel ? FontWeight.w600 : null))),
+              ]),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget spaceChip(String s, String label, Color c) => ChoiceChip(
+          label: Text(label),
+          selected: space == s,
+          selectedColor: c.withValues(alpha: 0.25),
+          side: BorderSide(color: space == s ? c : _line),
+          onSelected: (_) => onSpace(s),
+        );
+
+    return ListView(
+      padding: EdgeInsets.only(top: wide ? 8 : 16, bottom: 16),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 12, 12),
+          child: Text('Notities',
+              style: TextStyle(
+                  color: accent, fontSize: 20, fontWeight: FontWeight.w600)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 12, 12),
+          child: Wrap(spacing: 6, runSpacing: 6, children: [
+            for (final s in Store.spaces)
+              spaceChip(s, store.spaceName(s), spaceColor(s)),
+            spaceChip('all', 'Alles', primary),
+          ]),
+        ),
+        item(Icons.lightbulb_outline, 'Notities', 'notes'),
+        if (space != 'private') ...[
+          item(Icons.event_note_outlined, 'Bij klussen', 'jobs'),
+          item(Icons.history, 'Afgelopen klussen', 'past'),
+        ],
+        item(Icons.notes, 'Losse notities', 'loose'),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
+          child: Row(children: [
+            const Expanded(
+                child: Text('LABELS',
+                    style: TextStyle(
+                        color: muted, fontSize: 11, letterSpacing: 0.8))),
+            InkWell(
+              onTap: () => editLabels(context, space),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Text('Bewerken',
+                    style: TextStyle(color: muted, fontSize: 12)),
+              ),
+            ),
+          ]),
+        ),
+        for (final t in tags)
+          DragTarget<String>(
+            onAcceptWithDetails: (d) => onDropTag(d.data, t),
+            builder: (c, cand, _) => Container(
+              color: cand.isEmpty ? null : accent.withValues(alpha: 0.15),
+              child: item(Icons.label_outline, t, '#$t'),
+            ),
+          ),
+        item(Icons.edit_outlined, 'Labels bewerken', '__edit')
+            ._withTap(() => editLabels(context, space)),
+        const Divider(color: _line, height: 24),
+        item(Icons.archive_outlined, 'Archief', 'archive'),
+        item(Icons.delete_outline, 'Prullenbak', 'trash'),
+      ],
+    );
+  }
+}
+
+extension on Widget {
+  /// Vervangt de tik-actie van een menu-item (voor "Labels bewerken").
+  Widget _withTap(VoidCallback onTap) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AbsorbPointer(child: this),
+      );
+}
+
+/// Kolommen met kaarten van verschillende hoogte (zoals Keep).
+class _Masonry extends StatelessWidget {
+  final int columns;
+  final double width;
+  final List<Note> notes;
+  final Widget Function(Note n, double width) builder;
+  const _Masonry(
+      {required this.columns,
+      required this.width,
+      required this.notes,
+      required this.builder});
+
+  double _estimate(Note n, double w) {
+    final charsPerLine = (w / 7.5).clamp(10, 200);
+    var h = 28.0;
+    if (store.noteImages(n.id).isNotEmpty) h += 130;
+    if (n.title.trim().isNotEmpty) h += 24;
+    var lines = 0.0;
+    for (final l in n.text.split('\n').take(10)) {
+      lines += (l.length / charsPerLine).ceil().clamp(1, 4);
+    }
+    h += lines.clamp(0, 10) * 19;
+    if (n.tags.isNotEmpty || n.jobKey != null) h += 30;
+    return h;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colW = width / columns;
+    final cols = List.generate(columns, (_) => <Note>[]);
+    final heights = List.filled(columns, 0.0);
+    for (final n in notes) {
+      var i = 0;
+      for (var c = 1; c < columns; c++) {
+        if (heights[c] < heights[i] - 1) i = c;
+      }
+      cols[i].add(n);
+      heights[i] += _estimate(n, colW);
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      for (final c in cols)
+        Expanded(
+          child: Column(children: [
+            for (final n in c)
+              Padding(
+                padding: const EdgeInsets.all(5),
+                child: builder(n, colW - 10),
+              ),
+          ]),
+        ),
+    ]);
+  }
+}
+
+/// Kaartje van één notitie in het raster of de lijst.
+class NoteCard extends StatelessWidget {
+  final Note note;
+  final bool selected;
+  final bool showSpace;
+  final VoidCallback onTap;
+  const NoteCard(
+      {super.key,
+      required this.note,
+      required this.selected,
+      required this.onTap,
+      this.showSpace = false});
 
   @override
   Widget build(BuildContext context) {
     final n = note;
     final primary = Theme.of(context).colorScheme.primary;
     final job = store.job(n.jobKey);
-    final body = n.title.trim().isEmpty
-        ? n.text.split('\n').skip(1).join('\n')
-        : n.text;
-    final card = Card(
-      color: selected ? primary.withValues(alpha: 0.16) : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: selected ? BorderSide(color: primary) : BorderSide.none,
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (selecting)
-              Padding(
-                padding: const EdgeInsets.only(right: 8, top: 2),
-                child: Icon(
-                    selected ? Icons.check_circle : Icons.radio_button_unchecked,
-                    size: 20,
-                    color: selected ? primary : muted),
-              ),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      if (n.pinned)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Icon(Icons.push_pin, size: 14, color: primary),
-                        ),
-                      if (n.lockscreen)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 4),
-                          child:
-                              Icon(Icons.lock_outline, size: 14, color: muted),
-                        ),
-                      Expanded(
-                        child: Text(n.heading,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 15)),
-                      ),
-                    ]),
-                    if (body.trim().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(body.trim(),
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFFB8B6AF))),
-                      ),
-                    const SizedBox(height: 4),
-                    Wrap(spacing: 8, runSpacing: 2, children: [
-                      Text('${dateShort(n.updated)} ${hm(n.updated)}',
-                          style: const TextStyle(color: muted, fontSize: 12)),
-                      if (job != null)
-                        GestureDetector(
-                          onTap: () => openJob(context, job.key),
-                          child: Text('${store.clientName(job)} · ${job.title}',
-                              style: TextStyle(color: primary, fontSize: 12)),
-                        ),
-                      for (final t in n.tags)
-                        Text('#$t',
-                            style:
-                                const TextStyle(color: muted, fontSize: 12)),
-                    ]),
-                  ]),
-            ),
-            ReorderableDragStartListener(
-              index: index,
-              child: const Padding(
-                padding: EdgeInsets.all(8),
-                child: Icon(Icons.drag_handle, color: muted),
-              ),
-            ),
-          ]),
-        ),
-      ),
-    );
+    final images = store.noteImages(n.id);
+    final lines = n.text.trim().isEmpty
+        ? <String>[]
+        : n.text.trim().split('\n').take(10).toList();
+    final more = n.text.trim().split('\n').length > 10;
 
-    // Lang indrukken: selecteren en slepen naar een tag.
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: LongPressDraggable<String>(
-        data: n.id,
-        dragAnchorStrategy: pointerDragAnchorStrategy,
-        onDragStarted: onDragStart,
-        feedback: Material(
-          color: Colors.transparent,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 240),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A2B2E),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: primary),
-            ),
-            child: Text(
-                dragCount > 1
-                    ? '$dragCount notities · sleep naar een tag'
-                    : '${n.heading} · sleep naar een tag',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white)),
+    Widget line(String l) {
+      final checked = l.startsWith('☑');
+      final open = l.startsWith('☐');
+      if (checked || open) {
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2, right: 6),
+            child: Icon(
+                checked ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 16,
+                color: muted),
           ),
-        ),
-        childWhenDragging: Opacity(opacity: 0.4, child: card),
-        child: card,
+          Expanded(
+            child: Text(l.substring(1).trim(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: checked ? muted : const Color(0xFFD9D7D0),
+                    decoration: checked ? TextDecoration.lineThrough : null)),
+          ),
+        ]);
+      }
+      return Text(l,
+          maxLines: 4,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Color(0xFFD9D7D0)));
+    }
+
+    return Material(
+      color: _cardColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+            color: selected ? primary : _line, width: selected ? 2 : 1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (images.isNotEmpty)
+            Image.memory(images.first.bytes,
+                height: images.length == 1 ? 140 : 110, fit: BoxFit.cover),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (n.title.trim().isNotEmpty || n.pinned || n.lockscreen)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(n.title.trim(),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15)),
+                            ),
+                            if (n.lockscreen)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Icon(Icons.lock_outline,
+                                    size: 14, color: muted),
+                              ),
+                            if (n.pinned)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Icon(Icons.push_pin,
+                                    size: 14, color: primary),
+                              ),
+                          ]),
+                    ),
+                  for (final l in lines)
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: line(l)),
+                  if (more)
+                    const Text('…', style: TextStyle(color: muted)),
+                  if (job != null || n.tags.isNotEmpty || showSpace)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Wrap(spacing: 4, runSpacing: 4, children: [
+                        if (showSpace && job == null)
+                          _Tag(store.spaceName(n.space), spaceColor(n.space)),
+                        if (job != null)
+                          _Tag(job.title, primary, icon: Icons.event_note),
+                        for (final t in n.tags) _Tag(t, null),
+                      ]),
+                    ),
+                  if (n.trashed != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                          'Verwijderd op ${dateShort(n.trashed!)}',
+                          style: const TextStyle(color: muted, fontSize: 11)),
+                    ),
+                ]),
+          ),
+        ]),
       ),
     );
   }
+}
+
+class _Tag extends StatelessWidget {
+  final String text;
+  final Color? color;
+  final IconData? icon;
+  const _Tag(this.text, this.color, {this.icon});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: color?.withValues(alpha: 0.15) ?? const Color(0xFF2A2B2F),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (icon != null) ...[
+            Icon(icon, size: 11, color: color),
+            const SizedBox(width: 3),
+          ],
+          Flexible(
+            child: Text(text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 11, color: color ?? const Color(0xFFC9C7C0))),
+          ),
+        ]),
+      );
 }

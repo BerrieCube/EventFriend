@@ -45,8 +45,19 @@ class _TodayScreenState extends State<TodayScreen> {
       ),
       body: StoreBuilder(builder: (context) {
         final today = store.jobsOn(now);
-        final upcoming =
-            store.jobs.where((j) => j.start.isAfter(now)).take(3).toList();
+        final tomorrowDay = DateTime(now.year, now.month, now.day + 1);
+        // Klussen die morgen beginnen (meerdaagse van vandaag staan al boven).
+        final tomorrow = store
+            .jobsOn(tomorrowDay)
+            .where((j) => !today.any((t) => t.key == j.key))
+            .toList();
+        final upcoming = store.jobs
+            .where((j) =>
+                j.start.isAfter(now) &&
+                !today.any((t) => t.key == j.key) &&
+                !tomorrow.any((t) => t.key == j.key))
+            .take(3)
+            .toList();
         return RefreshIndicator(
           onRefresh: () async {
             await sync.run();
@@ -80,6 +91,10 @@ class _TodayScreenState extends State<TodayScreen> {
               for (final j in today) ...[
                 _TodayJob(job: j),
                 const SizedBox(height: 12),
+              ],
+              if (tomorrow.isNotEmpty) ...[
+                SectionTitle('Morgen · ${dateShort(tomorrowDay)}'),
+                for (final j in tomorrow) _TomorrowJob(job: j),
               ],
               if (upcoming.isNotEmpty) ...[
                 SectionTitle('Binnenkort',
@@ -229,4 +244,62 @@ class _BigButton extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// Compact blok voor de klus van morgen: klant, project, tijd, locatie en route.
+class _TomorrowJob extends StatelessWidget {
+  final Job job;
+  const _TomorrowJob({required this.job});
+
+  @override
+  Widget build(BuildContext context) {
+    final amber = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: amber.withValues(alpha: 0.35)),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => openJob(context, job.key),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClientLabel(job, size: 13),
+                      const SizedBox(height: 2),
+                      Text(job.title,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text('${hm(job.start)}–${hm(job.end)}',
+                          style: TextStyle(
+                              color: amber, fontWeight: FontWeight.w600)),
+                      if (job.location.isNotEmpty)
+                        Text(job.location,
+                            style: const TextStyle(color: muted)),
+                      const SizedBox(height: 4),
+                      const Text('Tik voor callsheet en notities',
+                          style: TextStyle(color: muted, fontSize: 12)),
+                    ]),
+              ),
+              if (job.location.isNotEmpty)
+                IconButton(
+                  tooltip: 'Route',
+                  iconSize: 28,
+                  color: amber,
+                  icon: const Icon(Icons.navigation_outlined),
+                  onPressed: () => openRoute(context, job.location),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -7,6 +7,7 @@ import 'calendars.dart';
 import '../device.dart';
 import 'common.dart';
 import 'expenses.dart';
+import 'notes_settings.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -44,6 +45,18 @@ class SettingsScreen extends StatelessWidget {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const CalendarsScreen())),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.sticky_note_2_outlined),
+                  title: const Text('Notities'),
+                  subtitle: Text(
+                      '${store.spaceName('work')} en ${store.spaceName('private')} · pincode · Google Keep importeren'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const NotesSettingsScreen())),
                 ),
               ),
               const SizedBox(height: 8),

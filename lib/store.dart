@@ -111,6 +111,9 @@ class Note {
   bool pinned; // bovenaan vastgezet
   List<String> tags;
   double order; // handmatige volgorde (lager = hoger in de lijst)
+  String space; // 'work' of 'private' (klusnotities altijd 'work')
+  bool archived; // in het archief (niet in het hoofdoverzicht)
+  DateTime? trashed; // in de prullenbak sinds (na 7 dagen definitief weg)
 
   Note(
       {required this.id,
@@ -125,7 +128,10 @@ class Note {
       this.widget = false,
       this.pinned = false,
       List<String>? tags,
-      double? order})
+      double? order,
+      this.archived = false,
+      this.trashed,
+      this.space = 'work'})
       : tags = tags ?? [],
         order = order ?? -created.millisecondsSinceEpoch.toDouble();
 
@@ -150,6 +156,9 @@ class Note {
         'pinned': pinned,
         'tags': tags,
         'order': order,
+        'archived': archived,
+        'trashed': trashed?.toIso8601String(),
+        'space': space,
       };
 
   factory Note.fromMap(Map<String, dynamic> m) => Note(
@@ -166,6 +175,9 @@ class Note {
         pinned: m['pinned'] == true,
         tags: (m['tags'] as List?)?.map((e) => '$e').toList(),
         order: (m['order'] as num?)?.toDouble(),
+        archived: m['archived'] == true,
+        trashed: m['trashed'] == null ? null : DateTime.parse(m['trashed']),
+        space: m['jobKey'] != null ? 'work' : (m['space'] ?? 'work'),
       );
 }
 
@@ -621,37 +633,163 @@ class Store extends ChangeNotifier {
   Future<void> deleteJob(String key) => _del('job', key);
 
   // ---------- Notities ----------
+  /// Alle notities behalve de prullenbak (archief telt wel mee).
   /// Vastgezet eerst, daarna handmatige volgorde.
-  List<Note> get notes => _notes.values.map((v) => Note.fromMap(_m(v))).toList()
-    ..sort((a, b) {
-      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-      return a.order.compareTo(b.order);
-    });
+  List<Note> get notes => _sortedNotes.where((n) => n.trashed == null).toList();
 
-  /// Alle gebruikte tags plus zelf aangemaakte (nog lege) tags.
-  List<String> get allTags {
-    final t = <String>{
-      for (final n in notes) ...n.tags,
-      ...List<String>.from((_sync.get('extraTags') ?? const []) as List),
-    }.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return t;
+  List<Note> get trashedNotes =>
+      _sortedNotes.where((n) => n.trashed != null).toList()
+        ..sort((a, b) => b.trashed!.compareTo(a.trashed!));
+
+  List<Note> get _sortedNotes =>
+      _notes.values.map((v) => Note.fromMap(_m(v))).toList()
+        ..sort((a, b) {
+          if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+          return a.order.compareTo(b.order);
+        });
+
+  Note? note(String id) {
+    final v = _notes.get(id);
+    return v == null ? null : Note.fromMap(_m(v));
   }
 
-  Future<void> addTag(String tag) async {
-    final l = List<String>.from((_sync.get('extraTags') ?? const []) as List);
+  /// Bovenste plek in de handmatige volgorde.
+  double get topOrder {
+    final all = _sortedNotes;
+    return all.isEmpty
+        ? 0
+        : all.map((x) => x.order).reduce((a, b) => a < b ? a : b) - 1;
+  }
+
+  /// Naar de prullenbak (7 dagen herstelbaar).
+  Future<void> trashNote(Note n) async {
+    n
+      ..trashed = DateTime.now()
+      ..pinned = false
+      ..lockscreen = false
+      ..widget = false;
+    await saveNote(n, touch: false);
+  }
+
+  Future<void> restoreNote(Note n) async {
+    n.trashed = null;
+    await saveNote(n, touch: false);
+  }
+
+  /// Definitief verwijderen, inclusief foto's in de notitie.
+  Future<void> purgeNote(String id) async {
+    for (final p in noteImages(id)) {
+      await _del('photo', p.id);
+    }
+    await _del('note', id);
+  }
+
+  static const trashRetention = Duration(days: 7);
+
+  Future<int> cleanupTrash() async {
+    final limit = DateTime.now().subtract(trashRetention);
+    final old = trashedNotes.where((n) => n.trashed!.isBefore(limit)).toList();
+    for (final n in old) {
+      await purgeNote(n.id);
+    }
+    return old.length;
+  }
+
+  Future<void> renameTag(String from, String to, {String space = 'all'}) async {
+    final ss = space == 'all' ? spaces : [space];
+    for (final s in ss) {
+      final l = _extraTags(s);
+      if (l.remove(from) && !l.contains(to)) l.add(to);
+      await _sync.put(_tagKey(s), l);
+    }
+    for (final n in _sortedNotes
+        .where((n) => ss.contains(n.space) && n.tags.contains(from))) {
+      n.tags = {...n.tags.where((t) => t != from), to}.toList();
+      await saveNote(n, touch: false);
+    }
+    notifyListeners();
+  }
+
+  /// Bewaart geïmporteerde notities (bestaande met dezelfde id worden bijgewerkt).
+  Future<void> importNote(Note n, List<Uint8List> images) async {
+    final had = noteImages(n.id).length;
+    await _put('note', n.id, n.toMap());
+    for (var i = had; i < images.length; i++) {
+      final p = Photo(
+          id: '${n.id}_img$i',
+          jobKey: 'note:${n.id}',
+          caption: '',
+          created: n.created,
+          bytes: images[i]);
+      await _put('photo', p.id, p.toMap());
+    }
+  }
+
+  /// Foto's in een losse notitie (opgeslagen als foto met sleutel note:<id>).
+  List<Photo> noteImages(String noteId) => photosFor('note:$noteId');
+
+  // ---------- Notitie-omgevingen (Werk / Privé) ----------
+  static const spaces = ['work', 'private'];
+
+  String spaceName(String s) =>
+      pref('space_${s}_name', s == 'work' ? 'Werk' : 'Privé') as String;
+
+  int spaceColor(String s) =>
+      (pref('space_${s}_color', s == 'work' ? 0xFFEF9F27 : 0xFF5B9BE6) as num)
+          .toInt();
+
+  /// Pincode voor Privé: alleen op dit apparaat bewaard, niet gesynchroniseerd.
+  String? get privatePin => _sync.get('privatePin') as String?;
+  Future<void> setPrivatePin(String? pin) async {
+    pin == null ? await _sync.delete('privatePin') : await _sync.put('privatePin', pin);
+    notifyListeners();
+  }
+
+  /// Laatst gekozen omgeving in Notities (lokaal): 'work', 'private' of 'all'.
+  String get notesSpace => (_sync.get('notesSpace') as String?) ?? 'work';
+  Future<void> setNotesSpace(String s) => _sync.put('notesSpace', s);
+
+  /// Lokale weergavekeuze: raster (true) of lijst.
+  bool get notesGrid => (_sync.get('notesGrid') as bool?) ?? true;
+  Future<void> setNotesGrid(bool v) async {
+    await _sync.put('notesGrid', v);
+    notifyListeners();
+  }
+
+  String _tagKey(String space) =>
+      space == 'work' ? 'extraTags' : 'extraTags_$space';
+
+  List<String> _extraTags(String space) =>
+      List<String>.from((_sync.get(_tagKey(space)) ?? const []) as List);
+
+  /// Tags in een omgeving ('all' = beide), plus zelf aangemaakte lege tags.
+  List<String> tagsIn(String space) {
+    final ss = space == 'all' ? spaces : [space];
+    return <String>{
+      for (final n in notes.where((n) => ss.contains(n.space))) ...n.tags,
+      for (final s in ss) ..._extraTags(s),
+    }.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  List<String> get allTags => tagsIn('all');
+
+  Future<void> addTag(String tag, {String space = 'work'}) async {
+    final l = _extraTags(space);
     if (!l.contains(tag)) {
       l.add(tag);
-      await _sync.put('extraTags', l);
+      await _sync.put(_tagKey(space), l);
       notifyListeners();
     }
   }
 
-  Future<void> removeTag(String tag) async {
-    final l = List<String>.from((_sync.get('extraTags') ?? const []) as List)
-      ..remove(tag);
-    await _sync.put('extraTags', l);
-    for (final n in notes.where((n) => n.tags.contains(tag))) {
+  Future<void> removeTag(String tag, {String space = 'all'}) async {
+    final ss = space == 'all' ? spaces : [space];
+    for (final s in ss) {
+      await _sync.put(_tagKey(s), _extraTags(s)..remove(tag));
+    }
+    for (final n in _sortedNotes
+        .where((n) => ss.contains(n.space) && n.tags.contains(tag))) {
       n.tags.remove(tag);
       await saveNote(n, touch: false);
     }
@@ -673,7 +811,11 @@ class Store extends ChangeNotifier {
     await _put('note', n.id, n.toMap());
   }
 
-  Future<void> deleteNote(String id) => _del('note', id);
+  /// Verplaatst naar de prullenbak.
+  Future<void> deleteNote(String id) async {
+    final n = note(id);
+    if (n != null) await trashNote(n);
+  }
 
   // ---------- Foto's ----------
   List<Photo> photosFor(String jobKey) => _photos.values

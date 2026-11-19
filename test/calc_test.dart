@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:eventfriend/calc/bridle.dart';
 import 'package:eventfriend/calc/defs.dart';
 import 'package:eventfriend/format.dart';
+import 'package:archive/archive.dart';
 import 'package:eventfriend/ical.dart';
+import 'package:eventfriend/keep_import.dart';
 import 'package:eventfriend/note_text.dart';
 import 'package:eventfriend/pdf_theme.dart';
 import 'package:eventfriend/store.dart';
@@ -140,5 +145,72 @@ void main() {
     expect(r.km, 84);
     expect(r.expenses, 10.5);
     expect(r.invoiced, isNull);
+  });
+
+  test('Google Keep-export inlezen', () {
+    Uint8List js(Map m) => Uint8List.fromList(utf8.encode(jsonEncode(m)));
+    final zip = Archive()
+      ..add(ArchiveFile.bytes('Takeout/Keep/Inpaklijst.json', js({
+            'title': 'Inpaklijst',
+            'textContent': '',
+            'isPinned': true,
+            'isArchived': false,
+            'isTrashed': false,
+            'createdTimestampUsec': 1700000000000000,
+            'userEditedTimestampUsec': 1700000500000000,
+            'labels': [
+              {'name': 'Video'}
+            ],
+            'listContent': [
+              {'text': 'SDI-kabels', 'isChecked': true},
+              {'text': 'Converter', 'isChecked': false},
+            ],
+            'attachments': [
+              {'filePath': 'abc.jpeg', 'mimetype': 'image/jpeg'}
+            ],
+          })))
+      ..add(ArchiveFile.bytes('Takeout/Keep/abc.jpg', Uint8List.fromList([1, 2, 3])))
+      ..add(ArchiveFile.bytes('Takeout/Keep/Weg.json', js({
+            'title': 'Weg',
+            'textContent': 'x',
+            'isTrashed': true,
+          })))
+      ..add(ArchiveFile.bytes('Takeout/Keep/Wifi.json', js({
+            'title': '',
+            'textContent': 'Wifi zaal 3: geheim',
+            'isArchived': true,
+            'createdTimestampUsec': 1600000000000000,
+          })));
+    final r = parseKeep([('takeout.zip', Uint8List.fromList(ZipEncoder().encode(zip)))]);
+    expect(r.notes, hasLength(2));
+    expect(r.skippedTrashed, 1);
+    final list = r.notes.firstWhere((n) => n.title == 'Inpaklijst');
+    expect(list.pinned, isTrue);
+    expect(list.labels, ['Video']);
+    expect(list.images, hasLength(1)); // .jpeg in json, .jpg in zip
+    expect(deltaToPlain(list.content), '☑ SDI-kabels\n☐ Converter');
+    final wifi = r.notes.firstWhere((n) => n.title.isEmpty);
+    expect(wifi.archived, isTrue);
+    expect(deltaToPlain(wifi.content), 'Wifi zaal 3: geheim');
+  });
+
+  test('klusnotities horen altijd bij Werk', () {
+    final m = Note(
+            id: '1',
+            text: '',
+            created: DateTime(2026),
+            updated: DateTime(2026),
+            jobKey: 'a|1',
+            space: 'private')
+        .toMap();
+    expect(Note.fromMap(m).space, 'work');
+    final loose = Note(
+        id: '2',
+        text: '',
+        created: DateTime(2026),
+        updated: DateTime(2026),
+        space: 'private');
+    expect(Note.fromMap(loose.toMap()).space, 'private');
+    expect(Note.fromMap({...loose.toMap()}..remove('space')).space, 'work');
   });
 }

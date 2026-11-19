@@ -27,6 +27,7 @@ Future<void> main() async {
   // Op de achtergrond: gegevens synchroniseren en agenda's verversen.
   sync.run().whenComplete(() async {
     await store.cleanupExpiredDocs();
+    await store.cleanupTrash();
     await store.syncAll();
   });
 }
