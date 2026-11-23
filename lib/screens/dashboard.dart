@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -269,8 +270,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Row(children: [
                   const Expanded(
                     child: Text(
-                        'Houd een blok vast en sleep het naar een andere plek. '
-                        'Met de pijltjes rechtsonder maak je een blok breed of smal.',
+                        '${kIsWeb ? 'Sleep een blok' : 'Houd een blok vast en sleep het'} '
+                        'naar een andere plek. Met de pijltjes rechtsonder maak je '
+                        'een blok breed of smal.',
                         style: TextStyle(color: muted, fontSize: 12)),
                   ),
                   TextButton(
@@ -296,7 +298,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final item = items[i];
     final block = Stack(
         clipBehavior: Clip.none, fit: StackFit.passthrough, children: [
-      IgnorePointer(
+      // Absorbeert tikken (blok opent niets tijdens bewerken), maar telt wel
+      // als aanraakvlak zodat het blok versleept kan worden.
+      AbsorbPointer(
         child: Container(
           foregroundDecoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
@@ -330,29 +334,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return DragTarget<int>(
       onWillAcceptWithDetails: (d) => d.data != i,
       onAcceptWithDetails: (d) {
+        // Het gesleepte blok neemt de plek in van het blok eronder.
         final l = [...items];
         final moved = l.removeAt(d.data);
-        l.insert(d.data < i ? i - 1 : i, moved);
+        l.insert(i.clamp(0, l.length), moved);
         _save(l);
       },
       builder: (context, cand, _) => AnimatedOpacity(
         duration: const Duration(milliseconds: 120),
         opacity: cand.isEmpty ? 1 : 0.5,
-        child: LongPressDraggable<int>(
-          data: i,
-          onDragStarted: HapticFeedback.selectionClick,
-          feedback: Material(
-            color: Colors.transparent,
-            child: SizedBox(
-                width: width,
-                child: Opacity(opacity: 0.85, child: _Block(item: item))),
-          ),
-          childWhenDragging: Opacity(opacity: 0.3, child: block),
-          child: block,
-        ),
+        child: _dragSource(i, item, width, block),
       ),
     );
   }
+}
+
+/// Op het web direct slepen met de muis; op de telefoon lang indrukken
+/// (zodat gewoon scrollen blijft werken).
+Widget _dragSource(int i, DashItem item, double width, Widget block) {
+  final feedback = Material(
+    color: Colors.transparent,
+    child: SizedBox(
+        width: width,
+        child: Opacity(opacity: 0.85, child: _Block(item: item))),
+  );
+  final ghost = Opacity(opacity: 0.3, child: block);
+  if (kIsWeb) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.grab,
+      child: Draggable<int>(
+          data: i, feedback: feedback, childWhenDragging: ghost, child: block),
+    );
+  }
+  return LongPressDraggable<int>(
+    data: i,
+    onDragStarted: HapticFeedback.selectionClick,
+    feedback: feedback,
+    childWhenDragging: ghost,
+    child: block,
+  );
 }
 
 class _RoundButton extends StatelessWidget {
