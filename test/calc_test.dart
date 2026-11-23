@@ -213,4 +213,25 @@ void main() {
     expect(Note.fromMap(loose.toMap()).space, 'private');
     expect(Note.fromMap({...loose.toMap()}..remove('space')).space, 'work');
   });
+
+  test('checklist: afvinken, terugzetten en afgevinkte verwijderen', () {
+    const d = '[{"insert":"Lijst","attributes":{"bold":true}},{"insert":"\\n"},'
+        '{"insert":"A"},{"insert":"\\n","attributes":{"list":"unchecked"}},'
+        '{"insert":"B"},{"insert":"\\n","attributes":{"list":"unchecked"}},'
+        '{"insert":"C"},{"insert":"\\n","attributes":{"list":"unchecked"}}]';
+    final lines = linesOf(d);
+    expect(lines.map((l) => l.plain), ['Lijst', 'A', 'B', 'C']);
+    expect(lines.first.ops.first['attributes'], {'bold': true});
+    // A afvinken: gaat naar het einde.
+    final a = setLineChecked(d, 1, true);
+    expect(deltaToPlain(a), 'Lijst\n☐ B\n☐ C\n☑ A');
+    // A terugzetten: na het laatste open item.
+    final b = setLineChecked(a, 3, false);
+    expect(deltaToPlain(b), 'Lijst\n☐ B\n☐ C\n☐ A');
+    // Afgevinkte weg.
+    expect(deltaToPlain(removeCheckedLines(setLineChecked(d, 2, true))),
+        'Lijst\n☐ A\n☐ C');
+    // Heen en terug zonder wijziging blijft gelijk.
+    expect(deltaToPlain(jsonEncode(joinLines(linesOf(d)))), deltaToPlain(d));
+  });
 }

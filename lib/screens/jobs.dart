@@ -80,7 +80,9 @@ class _JobsScreenState extends State<JobsScreen> {
           if (_calendar) return const MonthView();
           final now = DateTime.now();
           final all = store.jobs;
-          final coming = all.where((j) => j.end.isAfter(now)).toList();
+          final coming = store.planningJobs
+              .where((j) => j.end.isAfter(now))
+              .toList();
           final past =
               all.where((j) => !j.end.isAfter(now)).toList().reversed.toList();
           return TabBarView(children: [
@@ -268,6 +270,7 @@ class _ToProcess extends StatelessWidget {
                 onPressed: () {
                   store.setInvoiced([j], true);
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        persist: false,
                     content: Text('"${j.title}" gemarkeerd als gefactureerd'),
                     action: SnackBarAction(
                         label: 'Ongedaan',
@@ -308,7 +311,7 @@ class _MonthViewState extends State<MonthView> {
     ];
     // Klussen per dag (meerdaagse klussen op elke dag).
     final perDay = <DateTime, int>{};
-    for (final j in store.jobs) {
+    for (final j in store.planningJobs) {
       if (j.end.isBefore(days.first) ||
           j.start.isAfter(days.last.add(const Duration(days: 1)))) {
         continue;

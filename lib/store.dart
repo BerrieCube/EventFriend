@@ -20,13 +20,15 @@ class CalendarSource {
   String url;
   DateTime? lastSync;
   String? error;
+  bool enabled; // uit = klussen verborgen in de planning (wel factureren)
 
   CalendarSource(
       {required this.id,
       required this.name,
       required this.url,
       this.lastSync,
-      this.error});
+      this.error,
+      this.enabled = true});
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -34,6 +36,7 @@ class CalendarSource {
         'url': url,
         'lastSync': lastSync?.toIso8601String(),
         'error': error,
+        'enabled': enabled,
       };
 
   factory CalendarSource.fromMap(Map<String, dynamic> m) => CalendarSource(
@@ -42,6 +45,7 @@ class CalendarSource {
         url: m['url'],
         lastSync: m['lastSync'] == null ? null : DateTime.parse(m['lastSync']),
         error: m['error'],
+        enabled: m['enabled'] != false,
       );
 }
 
@@ -516,7 +520,7 @@ class Store extends ChangeNotifier {
     if (syncing) return;
     syncing = true;
     notifyListeners();
-    for (final c in calendars) {
+    for (final c in calendars.where((c) => c.enabled)) {
       await syncCalendar(c, notify: false);
     }
     syncing = false;
@@ -585,6 +589,20 @@ class Store extends ChangeNotifier {
       _jobs.values.map((v) => Job.fromMap(_m(v))).toList()
         ..sort((a, b) => a.start.compareTo(b.start));
 
+  /// Klus hoort bij een agenda die uit staat.
+  bool isHidden(Job j) =>
+      !j.isManual && calendar(j.calId)?.enabled == false;
+
+  /// Klussen voor de planning (Vandaag, Komend, kalender, widget,
+  /// herinneringen, dashboard): zonder uitgezette agenda's.
+  List<Job> get planningJobs => jobs.where((j) => !isHidden(j)).toList();
+
+  Future<void> setCalendarEnabled(CalendarSource c, bool v) async {
+    c.enabled = v;
+    await _put('calendar', c.id, c.toMap());
+    if (v) await syncCalendar(c);
+  }
+
   Job? job(String? key) {
     if (key == null) return null;
     final v = _jobs.get(key);
@@ -594,7 +612,9 @@ class Store extends ChangeNotifier {
   List<Job> jobsOn(DateTime day) {
     final s = DateTime(day.year, day.month, day.day);
     final e = DateTime(s.year, s.month, s.day + 1);
-    return jobs.where((j) => j.start.isBefore(e) && j.end.isAfter(s)).toList();
+    return planningJobs
+        .where((j) => j.start.isBefore(e) && j.end.isAfter(s))
+        .toList();
   }
 
   // ---------- Facturatie, kilometers en onkosten ----------
@@ -891,6 +911,42 @@ class Store extends ChangeNotifier {
     }
     return expired.length;
   }
+
+  // ---------- Tabs en dashboard (per apparaat, niet gesynchroniseerd) ----------
+  static const allTabs = ['dashboard', 'today', 'jobs', 'hours', 'notes', 'tools'];
+
+  List<String> get enabledTabs {
+    final v = _sync.get('tabs');
+    final l = v == null
+        ? List.of(allTabs)
+        : List<String>.from(v as List).where(allTabs.contains).toList();
+    return l.isEmpty ? ['dashboard'] : l;
+  }
+
+  Future<void> setTabEnabled(String tab, bool on) async {
+    final cur = enabledTabs.toSet();
+    on ? cur.add(tab) : cur.remove(tab);
+    if (cur.isEmpty) return; // minstens één tab
+    await _sync.put('tabs', allTabs.where(cur.contains).toList());
+    notifyListeners();
+  }
+
+  /// Blokken op het dashboard: [{type, wide, ref}]. null = standaardindeling.
+  List<Map<String, dynamic>>? get dashboard {
+    final v = _sync.get('dashboard');
+    return v == null
+        ? null
+        : [for (final m in v as List) Map<String, dynamic>.from(m as Map)];
+  }
+
+  Future<void> setDashboard(List<Map<String, dynamic>> items) async {
+    await _sync.put('dashboard', items);
+    notifyListeners();
+  }
+
+  List<AppTile> get allApps =>
+      _apps.values.map((v) => AppTile.fromMap(_m(v))).toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
   // ---------- App- en link-tegels (Tools) ----------
   List<AppTile> appsIn(String section) => _apps.values

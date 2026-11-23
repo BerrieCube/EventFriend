@@ -148,18 +148,27 @@ class CalendarsScreen extends StatelessWidget {
             final count = store.jobs.where((j) => j.calId == c.id).length;
             return Card(
               child: ListTile(
+                contentPadding: const EdgeInsets.only(left: 16, right: 4),
                 leading: Icon(
                     c.error == null ? Icons.event_available : Icons.error_outline,
                     color: c.error == null
                         ? Theme.of(context).colorScheme.primary
                         : Theme.of(context).colorScheme.error),
-                title: Text(c.name),
-                subtitle: Text(c.error ??
+                title: Text(c.name,
+                    style: TextStyle(color: c.enabled ? null : muted)),
+                subtitle: Text(!c.enabled
+                    ? 'Uit: verborgen in je planning; afgelopen klussen blijven in Te verwerken en het overzicht'
+                    : c.error ??
                     (c.lastSync == null
                         ? 'Nog niet gesynchroniseerd'
                         : '$count klussen · bijgewerkt ${dateShort(c.lastSync!)} ${hm(c.lastSync!)}')),
-                isThreeLine: c.error != null,
-                trailing: PopupMenuButton<String>(
+                isThreeLine: c.error != null || !c.enabled,
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Switch(
+                    value: c.enabled,
+                    onChanged: (v) => store.setCalendarEnabled(c, v),
+                  ),
+                  PopupMenuButton<String>(
                   onSelected: (v) async {
                     if (v == 'sync') store.syncCalendar(c);
                     if (v == 'edit') showAddCalendar(context, edit: c);
@@ -175,6 +184,7 @@ class CalendarsScreen extends StatelessWidget {
                     PopupMenuItem(value: 'del', child: Text('Verwijderen')),
                   ],
                 ),
+                ]),
               ),
             );
           },

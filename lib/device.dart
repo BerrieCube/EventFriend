@@ -127,7 +127,7 @@ class DeviceIntegration {
     final now = DateTime.now();
     final want = <int, (Job, DateTime)>{};
     if (before > 0) {
-      for (final j in store.jobs) {
+      for (final j in store.planningJobs) {
         final at = j.start.subtract(Duration(minutes: before));
         if (at.isAfter(now) && at.isBefore(now.add(const Duration(days: 14)))) {
           want[('rem|${j.key}|${j.start}|$before').hashCode & 0x7fffffff] = (j, at);
@@ -175,7 +175,7 @@ class DeviceIntegration {
     try {
       // Volgende klus: lopende of eerstvolgende.
       final t = DateTime.now();
-      final next = store.jobs.where((j) => j.end.isAfter(t)).firstOrNull;
+      final next = store.planningJobs.where((j) => j.end.isAfter(t)).firstOrNull;
       if (next == null) {
         await HomeWidget.saveWidgetData<String>('next_title', 'Geen klussen gepland');
         await HomeWidget.saveWidgetData<String>('next_time', '');

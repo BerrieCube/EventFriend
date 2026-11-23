@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../pdf_theme.dart' show splitLinks;
+import '../route.dart' show geocode;
 import '../store.dart';
 import 'settings.dart';
 
@@ -39,8 +40,7 @@ Future<void> openRoute(BuildContext context, String location) async {
   final options = <(IconData, String, Uri)>[
     (Icons.map_outlined, 'Google Maps',
         Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$q')),
-    (Icons.navigation_outlined, 'Waze',
-        Uri.parse('https://waze.com/ul?q=$q&navigate=yes')),
+    (Icons.navigation_outlined, 'Waze', Uri()), // zie _openWaze
     if (!kIsWeb)
       (Icons.apps, 'Andere app…', Uri.parse('geo:0,0?q=$q')),
   ];
@@ -61,7 +61,11 @@ Future<void> openRoute(BuildContext context, String location) async {
             title: Text(o.$2),
             onTap: () {
               Navigator.pop(c);
-              launchUrl(o.$3, mode: LaunchMode.externalApplication);
+              if (o.$2 == 'Waze') {
+                _openWaze(location);
+              } else {
+                launchUrl(o.$3, mode: LaunchMode.externalApplication);
+              }
             },
           ),
         ListTile(
@@ -78,10 +82,35 @@ Future<void> openRoute(BuildContext context, String location) async {
   );
 }
 
+/// Waze navigeert betrouwbaar naar coördinaten; een adres als zoekterm
+/// opent vaak alleen de zoekbalk. Daarom eerst het adres opzoeken.
+Future<void> _openWaze(String location) async {
+  final q = Uri.encodeComponent(location);
+  String params;
+  try {
+    final (lat, lon) =
+        await geocode(location).timeout(const Duration(seconds: 6));
+    params = 'll=$lat,$lon&navigate=yes';
+  } catch (_) {
+    params = 'q=$q&navigate=yes';
+  }
+  if (!kIsWeb) {
+    try {
+      if (await launchUrl(Uri.parse('waze://?$params'),
+          mode: LaunchMode.externalApplication)) {
+        return;
+      }
+    } catch (_) {}
+  }
+  await launchUrl(Uri.parse('https://waze.com/ul?$params'),
+      mode: LaunchMode.externalApplication);
+}
+
 Future<void> callNumber(String number) =>
     launchUrl(Uri(scheme: 'tel', path: number));
 
-Future<bool> confirm(BuildContext context, String title, String body) async {
+Future<bool> confirm(BuildContext context, String title, String body,
+    {String ok = 'Verwijderen'}) async {
   final r = await showDialog<bool>(
     context: context,
     builder: (c) => AlertDialog(
@@ -93,7 +122,7 @@ Future<bool> confirm(BuildContext context, String title, String body) async {
             child: const Text('Annuleren')),
         FilledButton(
             onPressed: () => Navigator.pop(c, true),
-            child: const Text('Verwijderen')),
+            child: Text(ok)),
       ],
     ),
   );

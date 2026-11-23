@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations;
 
+import 'screens/dashboard.dart';
 import 'screens/hours.dart';
 import 'screens/job_detail.dart';
 import 'screens/jobs.dart';
@@ -94,16 +95,6 @@ class EventFriendApp extends StatelessWidget {
               borderSide: BorderSide.none),
         ),
       ),
-      // Op een groot scherm (laptop) niet over de hele breedte uitrekken.
-      builder: (context, child) => ColoredBox(
-        color: const Color(0xFF0A0B0C),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1280),
-            child: child,
-          ),
-        ),
-      ),
       home: const HomeShell(),
     );
   }
@@ -117,19 +108,48 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _tab = 0;
+  String? _tabId;
+
+  /// (id, label, icoon) van alle tabs.
+  static const _meta = <String, (String, IconData)>{
+    'dashboard': ('Dashboard', Icons.dashboard_outlined),
+    'today': ('Vandaag', Icons.home_outlined),
+    'jobs': ('Klussen', Icons.calendar_month_outlined),
+    'hours': ('Uren', Icons.schedule),
+    'notes': ('Notities', Icons.sticky_note_2_outlined),
+    'tools': ('Tools', Icons.handyman_outlined),
+  };
 
   @override
   void initState() {
     super.initState();
     device.openRequest.addListener(_open);
+    store.addListener(_onStore);
     WidgetsBinding.instance.addPostFrameCallback((_) => _open());
   }
 
   @override
   void dispose() {
     device.openRequest.removeListener(_open);
+    store.removeListener(_onStore);
     super.dispose();
+  }
+
+  /// Tabs kunnen in de instellingen aan/uit worden gezet.
+  void _onStore() {
+    if (mounted) setState(() {});
+  }
+
+  void _go(String id) {
+    if (store.enabledTabs.contains(id)) {
+      setState(() => _tabId = id);
+    } else if (id == 'jobs') {
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const JobsScreen()));
+    } else if (id == 'notes') {
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const NotesScreen()));
+    }
   }
 
   /// Aangetikte melding: open de notitie of klus.
@@ -142,30 +162,39 @@ class _HomeShellState extends State<HomeShell> {
       final id = p.substring(5);
       final n = store.notes.where((n) => n.id == id).firstOrNull;
       if (n == null) return;
-      setState(() => _tab = 3);
+      if (store.enabledTabs.contains('notes')) setState(() => _tabId = 'notes');
       editNote(context, note: n, job: store.job(n.jobKey));
     } else if (p.startsWith('job:')) {
       openJob(context, p.substring(4));
     }
   }
 
+  Widget _page(String id) => switch (id) {
+        'dashboard' => const DashboardScreen(),
+        'today' => TodayScreen(onOpenJobs: () => _go('jobs')),
+        'jobs' => const JobsScreen(),
+        'hours' => const HoursScreen(),
+        'notes' => const NotesScreen(),
+        _ => const ToolsScreen(),
+      };
+
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      TodayScreen(onOpenJobs: () => setState(() => _tab = 1)),
-      const JobsScreen(),
-      const HoursScreen(),
-      const NotesScreen(),
-      const ToolsScreen(),
-    ];
+    final tabs = store.enabledTabs;
+    final id = tabs.contains(_tabId) ? _tabId! : tabs.first;
+    final index = tabs.indexOf(id);
+    final pages = [for (final t in tabs) KeyedSubtree(key: ValueKey(t), child: _page(t))];
+    final body = IndexedStack(index: index, children: pages);
+    void select(int i) => setState(() => _tabId = tabs[i]);
+
     final wide = MediaQuery.sizeOf(context).width >= 800;
     if (wide) {
-      // Laptop/tablet: navigatie aan de zijkant, inhoud niet te breed.
+      // Laptop/tablet: navigatie aan de zijkant.
       final extended = MediaQuery.sizeOf(context).width >= 1100;
       return Scaffold(
         body: Row(children: [
           NavigationRail(
-            selectedIndex: _tab,
+            selectedIndex: index,
             extended: extended,
             backgroundColor: const Color(0xFF141518),
             indicatorColor: amber.withValues(alpha: 0.18),
@@ -186,43 +215,34 @@ class _HomeShellState extends State<HomeShell> {
                           fontWeight: FontWeight.w600))
                   : const Icon(Icons.bolt, color: amber),
             ),
-            onDestinationSelected: (i) => setState(() => _tab = i),
-            destinations: const [
-              NavigationRailDestination(
-                  icon: Icon(Icons.home_outlined), label: Text('Vandaag')),
-              NavigationRailDestination(
-                  icon: Icon(Icons.calendar_month_outlined),
-                  label: Text('Klussen')),
-              NavigationRailDestination(
-                  icon: Icon(Icons.schedule), label: Text('Uren')),
-              NavigationRailDestination(
-                  icon: Icon(Icons.sticky_note_2_outlined),
-                  label: Text('Notities')),
-              NavigationRailDestination(
-                  icon: Icon(Icons.handyman_outlined), label: Text('Tools')),
+            onDestinationSelected: select,
+            destinations: [
+              for (final t in tabs)
+                NavigationRailDestination(
+                    icon: Icon(_meta[t]!.$2), label: Text(_meta[t]!.$1)),
             ],
           ),
           const VerticalDivider(width: 1, color: Color(0xFF232428)),
-          Expanded(child: IndexedStack(index: _tab, children: pages)),
+          Expanded(child: body),
         ]),
       );
     }
     return Scaffold(
-      body: IndexedStack(index: _tab, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Vandaag'),
-          NavigationDestination(
-              icon: Icon(Icons.calendar_month_outlined), label: 'Klussen'),
-          NavigationDestination(icon: Icon(Icons.schedule), label: 'Uren'),
-          NavigationDestination(
-              icon: Icon(Icons.sticky_note_2_outlined), label: 'Notities'),
-          NavigationDestination(
-              icon: Icon(Icons.handyman_outlined), label: 'Tools'),
-        ],
-      ),
+      body: body,
+      bottomNavigationBar: tabs.length < 2
+          ? null
+          : NavigationBar(
+              selectedIndex: index,
+              onDestinationSelected: select,
+              labelBehavior: tabs.length > 5
+                  ? NavigationDestinationLabelBehavior.onlyShowSelected
+                  : null,
+              destinations: [
+                for (final t in tabs)
+                  NavigationDestination(
+                      icon: Icon(_meta[t]!.$2), label: _meta[t]!.$1),
+              ],
+            ),
     );
   }
 }

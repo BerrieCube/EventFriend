@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -134,6 +135,10 @@ class _NoteEditorState extends State<_NoteEditor> {
   ];
   bool _format = false;
   bool _saved = false;
+  // Afgevinkte checklist-items staan los van de editor, ingeklapt onderaan.
+  final _checked = <NoteLine>[];
+  bool _showChecked = false;
+  bool _moving = false;
 
   @override
   void initState() {
@@ -143,7 +148,7 @@ class _NoteEditorState extends State<_NoteEditor> {
     Document doc;
     try {
       doc = delta != null
-          ? Document.fromJson(jsonDecode(delta) as List)
+          ? Document.fromJson(_splitChecked(jsonDecode(delta) as List))
           : widget.checklist
               ? Document.fromJson([
                   {
@@ -157,6 +162,7 @@ class _NoteEditorState extends State<_NoteEditor> {
     }
     _quill = QuillController(
         document: doc, selection: const TextSelection.collapsed(offset: 0));
+    _quill.addListener(_onChange);
     if (widget.photo) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _addImage());
     } else if (widget.note == null) {
@@ -168,6 +174,7 @@ class _NoteEditorState extends State<_NoteEditor> {
 
   @override
   void dispose() {
+    _quill.removeListener(_onChange);
     _quill.dispose();
     _focus.dispose();
     _scroll.dispose();
@@ -175,7 +182,77 @@ class _NoteEditorState extends State<_NoteEditor> {
     super.dispose();
   }
 
-  String get _content => jsonEncode(_quill.document.toDelta().toJson());
+  /// Haalt afgevinkte regels uit [ops] (naar [_checked]) en geeft de rest.
+  List<Map<String, dynamic>> _splitChecked(List ops) {
+    final lines = splitLines(ops);
+    _checked.addAll(lines.where((l) => l.isChecked));
+    final rest = lines.where((l) => !l.isChecked).toList();
+    return joinLines(rest.isEmpty ? [NoteLine([], null)] : rest);
+  }
+
+  List<Map<String, dynamic>> get _docOps =>
+      List<Map<String, dynamic>>.from(_quill.document.toDelta().toJson());
+
+  void _setDoc(List<Map<String, dynamic>> ops) {
+    _moving = true;
+    final sel = _quill.selection.baseOffset;
+    _quill.document = Document.fromJson(ops);
+    final len = _quill.document.length;
+    _quill.updateSelection(
+        TextSelection.collapsed(offset: min(max0(sel), len - 1)),
+        ChangeSource.local);
+    _moving = false;
+  }
+
+  static int max0(int v) => v < 0 ? 0 : v;
+
+  /// Net afgevinkt in de editor: naar het blok "afgevinkte items".
+  void _onChange() {
+    if (_moving) return;
+    final hasChecked = _docOps.any((o) =>
+        o['attributes'] is Map && (o['attributes'] as Map)['list'] == 'checked');
+    if (!hasChecked) return;
+    Future.microtask(() {
+      if (!mounted) return;
+      final before = _checked.length;
+      final ops = _splitChecked(_docOps);
+      if (_checked.length == before) return;
+      _setDoc(ops);
+      setState(() {});
+    });
+  }
+
+  /// Afgevinkt item terugzetten: na het laatste open checklist-item.
+  void _uncheck(int i) {
+    final l = _checked.removeAt(i)..setChecked(false);
+    final lines = splitLines(_docOps);
+    var at = lines.lastIndexWhere((x) => x.isCheckItem) + 1;
+    if (at == 0) {
+      at = lines.isNotEmpty && lines.last.plain.trim().isEmpty
+          ? lines.length - 1
+          : lines.length;
+    }
+    lines.insert(at, l);
+    _setDoc(joinLines(lines));
+    setState(() {});
+  }
+
+  void _deleteChecked() {
+    final removed = List.of(_checked);
+    setState(_checked.clear);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      persist: false,
+      content: Text('${removed.length} afgevinkte item(s) verwijderd'),
+      action: SnackBarAction(
+          label: 'Ongedaan',
+          onPressed: () {
+            if (mounted) setState(() => _checked.addAll(removed));
+          }),
+    ));
+  }
+
+  String get _content =>
+      jsonEncode(joinLines([...splitLines(_docOps), ..._checked]));
 
   /// Opslaan en sluiten. Lege notities zonder foto's worden niet bewaard.
   Future<void> _save({SnackBar? after}) async {
@@ -389,6 +466,7 @@ class _NoteEditorState extends State<_NoteEditor> {
                     final n = widget.note!;
                     await store.trashNote(n);
                     messenger.showSnackBar(SnackBar(
+        persist: false,
                       content: const Text('Notitie naar de prullenbak'),
                       action: SnackBarAction(
                           label: 'Ongedaan',
@@ -508,6 +586,50 @@ class _NoteEditorState extends State<_NoteEditor> {
                     minHeight: 160,
                   ),
                 ),
+                if (_checked.isNotEmpty) ...[
+                  const Divider(color: _line, height: 20),
+                  InkWell(
+                    onTap: () => setState(() => _showChecked = !_showChecked),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(children: [
+                        Icon(_showChecked
+                            ? Icons.expand_less
+                            : Icons.expand_more),
+                        const SizedBox(width: 6),
+                        Text(
+                            _checked.length == 1
+                                ? '1 afgevinkt item'
+                                : '${_checked.length} afgevinkte items',
+                            style: const TextStyle(color: muted)),
+                      ]),
+                    ),
+                  ),
+                  if (_showChecked) ...[
+                    for (var i = 0; i < _checked.length; i++)
+                      Row(children: [
+                        Checkbox(
+                          value: true,
+                          visualDensity: VisualDensity.compact,
+                          onChanged: (_) => _uncheck(i),
+                        ),
+                        Expanded(
+                          child: Text(_checked[i].plain,
+                              style: const TextStyle(
+                                  color: muted,
+                                  decoration: TextDecoration.lineThrough)),
+                        ),
+                      ]),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _deleteChecked,
+                        icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                        label: const Text('Afgevinkte items verwijderen'),
+                      ),
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 12),
                 Wrap(spacing: 6, runSpacing: 6, children: [
                   if (job != null)
@@ -959,6 +1081,7 @@ class _NotesScreenState extends State<NotesScreen> {
     setState(_selected.clear);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        persist: false,
         content: Text(archive
             ? '${notes.length} notitie(s) gearchiveerd'
             : '${notes.length} notitie(s) uit archief gehaald'),
@@ -982,6 +1105,7 @@ class _NotesScreenState extends State<NotesScreen> {
     setState(_selected.clear);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        persist: false,
         content: Text('${notes.length} notitie(s) naar de prullenbak'),
         action: SnackBarAction(
             label: 'Ongedaan',
@@ -1677,10 +1801,11 @@ class NoteCard extends StatelessWidget {
     final primary = Theme.of(context).colorScheme.primary;
     final job = store.job(n.jobKey);
     final images = store.noteImages(n.id);
-    final lines = n.text.trim().isEmpty
-        ? <String>[]
-        : n.text.trim().split('\n').take(10).toList();
-    final more = n.text.trim().split('\n').length > 10;
+    final all = n.text.trim().isEmpty ? <String>[] : n.text.trim().split('\n');
+    final checkedCount = all.where((l) => l.startsWith('☑')).length;
+    final open = all.where((l) => !l.startsWith('☑')).toList();
+    final lines = open.take(10).toList();
+    final more = open.length > 10;
 
     Widget line(String l) {
       final checked = l.startsWith('☑');
@@ -1763,6 +1888,15 @@ class NoteCard extends StatelessWidget {
                         child: line(l)),
                   if (more)
                     const Text('…', style: TextStyle(color: muted)),
+                  if (checkedCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                          checkedCount == 1
+                              ? '+ 1 afgevinkt item'
+                              : '+ $checkedCount afgevinkte items',
+                          style: const TextStyle(color: muted, fontSize: 12)),
+                    ),
                   if (job != null || n.tags.isNotEmpty || showSpace)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),

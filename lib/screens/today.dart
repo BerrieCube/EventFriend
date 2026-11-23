@@ -51,7 +51,7 @@ class _TodayScreenState extends State<TodayScreen> {
             .jobsOn(tomorrowDay)
             .where((j) => !today.any((t) => t.key == j.key))
             .toList();
-        final upcoming = store.jobs
+        final upcoming = store.planningJobs
             .where((j) =>
                 j.start.isAfter(now) &&
                 !today.any((t) => t.key == j.key) &&

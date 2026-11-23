@@ -11,7 +11,8 @@ import 'package:http/http.dart' as http;
 const Map<String, String> _headers =
     kIsWeb ? {} : {'User-Agent': 'EventFriend/0.1 (persoonlijke app)'};
 
-Future<(double, double)> _geocode(String address) async {
+/// Coördinaten (lat, lon) van een adres.
+Future<(double, double)> geocode(String address) async {
   final uri = Uri.https('nominatim.openstreetmap.org', '/search',
       {'format': 'json', 'limit': '1', 'q': address});
   final res = await http
@@ -28,8 +29,8 @@ Future<(double, double)> _geocode(String address) async {
 
 /// Enkele reis in kilometers over de weg.
 Future<double> roadDistanceKm(String from, String to) async {
-  final a = await _geocode(from);
-  final b = await _geocode(to);
+  final a = await geocode(from);
+  final b = await geocode(to);
   final uri = Uri.parse('https://router.project-osrm.org/route/v1/driving/'
       '${a.$2},${a.$1};${b.$2},${b.$1}?overview=false');
   final res = await http

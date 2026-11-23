@@ -50,6 +50,18 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Card(
                 child: ListTile(
+                  leading: const Icon(Icons.tab_outlined),
+                  title: const Text('Tabs'),
+                  subtitle: Text(
+                      '${store.enabledTabs.length} van ${Store.allTabs.length} aan · op dit apparaat'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => const TabsSettingsScreen())),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
                   leading: const Icon(Icons.sticky_note_2_outlined),
                   title: const Text('Notities'),
                   subtitle: Text(
@@ -264,6 +276,51 @@ class _AccountScreenState extends State<AccountScreen> {
           ]);
         },
       ),
+    );
+  }
+}
+
+
+/// Tabs aan/uit zetten (per apparaat).
+class TabsSettingsScreen extends StatelessWidget {
+  const TabsSettingsScreen({super.key});
+
+  static const _names = {
+    'dashboard': ('Dashboard', Icons.dashboard_outlined),
+    'today': ('Vandaag', Icons.home_outlined),
+    'jobs': ('Klussen', Icons.calendar_month_outlined),
+    'hours': ('Uren', Icons.schedule),
+    'notes': ('Notities', Icons.sticky_note_2_outlined),
+    'tools': ('Tools', Icons.handyman_outlined),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Tabs')),
+      body: StoreBuilder(builder: (context) {
+        final on = store.enabledTabs;
+        return ListView(padding: const EdgeInsets.all(16), children: [
+          const Text(
+              'Kies welke tabs je onderin (of op het web links) ziet. Dit geldt '
+              'alleen voor dit apparaat. Instellingen blijven altijd bereikbaar via het tandwiel.',
+              style: TextStyle(color: muted)),
+          const SizedBox(height: 12),
+          Card(
+            child: Column(children: [
+              for (final t in Store.allTabs)
+                SwitchListTile(
+                  secondary: Icon(_names[t]!.$2),
+                  title: Text(_names[t]!.$1),
+                  value: on.contains(t),
+                  onChanged: on.length == 1 && on.contains(t)
+                      ? null
+                      : (v) => store.setTabEnabled(t, v),
+                ),
+            ]),
+          ),
+        ]);
+      }),
     );
   }
 }

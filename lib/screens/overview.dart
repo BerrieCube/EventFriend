@@ -364,7 +364,8 @@ class ClientCard extends StatelessWidget {
                               'Als gefactureerd markeren?',
                               '${jobs.length} klus(sen) van $client gaan van '
                                   '"Te verwerken" naar "Afgelopen". '
-                                  'Terugzetten kan altijd.')) {
+                                  'Terugzetten kan altijd.',
+                              ok: 'Markeren')) {
                             await store.setInvoiced(jobs, true);
                           }
                         },
