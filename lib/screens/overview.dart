@@ -52,7 +52,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         final now = DateTime.now();
         final jobs = (_pending
                 ? store.toProcess
-                : store.jobs.where((j) =>
+                : store.billableJobs.where((j) =>
                     j.start.isBefore(now) &&
                     _selected.contains(weekStart(j.start))))
             .where((j) =>

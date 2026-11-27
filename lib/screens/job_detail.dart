@@ -119,8 +119,10 @@ class JobDetailScreen extends StatelessWidget {
                 ),
               ),
             ],
-            const SectionTitle('Kilometers & onkosten'),
-            ExpensesCard(job: job),
+            if (!store.isPersonal(job)) ...[
+              const SectionTitle('Kilometers & onkosten'),
+              ExpensesCard(job: job),
+            ],
             SectionTitle('Callsheet en documenten',
                 trailing: IconButton(
                     tooltip: 'Document toevoegen',

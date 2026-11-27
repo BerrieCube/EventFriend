@@ -154,3 +154,13 @@ String setLineChecked(String deltaJson, int index, bool checked) {
 /// Verwijdert alle afgevinkte regels.
 String removeCheckedLines(String deltaJson) => jsonEncode(
     joinLines(linesOf(deltaJson).where((l) => !l.isChecked).toList()));
+
+/// Platte tekst zonder afgevinkte checklist-items (voor melding en widget),
+/// met onderaan hoeveel er zijn afgevinkt.
+String withoutChecked(String plain) {
+  final lines = plain.split('\n');
+  final checked = lines.where((l) => l.trimLeft().startsWith('☑')).length;
+  final open = lines.where((l) => !l.trimLeft().startsWith('☑')).join('\n').trimRight();
+  if (checked == 0) return open;
+  return '${open.isEmpty ? '' : '$open\n'}+ $checked afgevinkt';
+}

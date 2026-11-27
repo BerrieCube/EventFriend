@@ -40,7 +40,7 @@ class SettingsScreen extends StatelessWidget {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.event_available_outlined),
-                  title: const Text('Rentman-agenda\'s'),
+                  title: const Text('Agenda\'s'),
                   subtitle: Text('${store.calendars.length} gekoppeld'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(
@@ -65,7 +65,7 @@ class SettingsScreen extends StatelessWidget {
                   leading: const Icon(Icons.sticky_note_2_outlined),
                   title: const Text('Notities'),
                   subtitle: Text(
-                      '${store.spaceName('work')} en ${store.spaceName('private')} · pincode · Google Keep importeren'),
+                      '${Store.spaces.map(store.spaceName).join(', ')} · pincode · Google Keep importeren'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => const NotesSettingsScreen())),

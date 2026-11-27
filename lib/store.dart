@@ -21,6 +21,7 @@ class CalendarSource {
   DateTime? lastSync;
   String? error;
   bool enabled; // uit = klussen verborgen in de planning (wel factureren)
+  bool personal; // persoonlijke agenda (bijv. Google): niet factureren
 
   CalendarSource(
       {required this.id,
@@ -28,7 +29,8 @@ class CalendarSource {
       required this.url,
       this.lastSync,
       this.error,
-      this.enabled = true});
+      this.enabled = true,
+      this.personal = false});
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -37,6 +39,7 @@ class CalendarSource {
         'lastSync': lastSync?.toIso8601String(),
         'error': error,
         'enabled': enabled,
+        'personal': personal,
       };
 
   factory CalendarSource.fromMap(Map<String, dynamic> m) => CalendarSource(
@@ -46,6 +49,7 @@ class CalendarSource {
         lastSync: m['lastSync'] == null ? null : DateTime.parse(m['lastSync']),
         error: m['error'],
         enabled: m['enabled'] != false,
+        personal: m['personal'] == true,
       );
 }
 
@@ -115,7 +119,7 @@ class Note {
   bool pinned; // bovenaan vastgezet
   List<String> tags;
   double order; // handmatige volgorde (lager = hoger in de lijst)
-  String space; // 'work' of 'private' (klusnotities altijd 'work')
+  String space; // 'work', 'private' of 'jobs' (klusnotities altijd 'jobs')
   bool archived; // in het archief (niet in het hoofdoverzicht)
   DateTime? trashed; // in de prullenbak sinds (na 7 dagen definitief weg)
 
@@ -181,7 +185,9 @@ class Note {
         order: (m['order'] as num?)?.toDouble(),
         archived: m['archived'] == true,
         trashed: m['trashed'] == null ? null : DateTime.parse(m['trashed']),
-        space: m['jobKey'] != null ? 'work' : (m['space'] ?? 'work'),
+        space: m['jobKey'] != null
+            ? 'jobs'
+            : (m['space'] == 'jobs' ? 'work' : (m['space'] ?? 'work')),
       );
 }
 
@@ -494,9 +500,13 @@ class Store extends ChangeNotifier {
     return v == null ? null : CalendarSource.fromMap(_m(v));
   }
 
-  Future<CalendarSource> addCalendar(String name, String url) async {
+  Future<CalendarSource> addCalendar(String name, String url,
+      {bool personal = false}) async {
     final c = CalendarSource(
-        id: newId(), name: name, url: normalizeCalendarUrl(url));
+        id: newId(),
+        name: name,
+        url: normalizeCalendarUrl(url),
+        personal: personal);
     await _put('calendar', c.id, c.toMap());
     await syncCalendar(c);
     return c;
@@ -589,6 +599,13 @@ class Store extends ChangeNotifier {
       _jobs.values.map((v) => Job.fromMap(_m(v))).toList()
         ..sort((a, b) => a.start.compareTo(b.start));
 
+  /// Afspraak uit een persoonlijke agenda (niet factureren).
+  bool isPersonal(Job j) =>
+      !j.isManual && calendar(j.calId)?.personal == true;
+
+  /// Klussen van opdrachtgevers (voor Te verwerken en het overzicht).
+  List<Job> get billableJobs => jobs.where((j) => !isPersonal(j)).toList();
+
   /// Klus hoort bij een agenda die uit staat.
   bool isHidden(Job j) =>
       !j.isManual && calendar(j.calId)?.enabled == false;
@@ -645,7 +662,9 @@ class Store extends ChangeNotifier {
   /// Afgelopen klussen die nog niet gefactureerd zijn.
   List<Job> get toProcess {
     final now = DateTime.now();
-    return jobs.where((j) => !j.end.isAfter(now) && !isInvoiced(j)).toList();
+    return billableJobs
+        .where((j) => !j.end.isAfter(now) && !isInvoiced(j))
+        .toList();
   }
 
   Future<void> saveManualJob(Job j) => _put('job', j.key, j.toMap());
@@ -749,13 +768,21 @@ class Store extends ChangeNotifier {
   List<Photo> noteImages(String noteId) => photosFor('note:$noteId');
 
   // ---------- Notitie-omgevingen (Werk / Privé) ----------
-  static const spaces = ['work', 'private'];
+  /// 'jobs' bevat automatisch alle notities die aan een klus hangen.
+  static const spaces = ['work', 'private', 'jobs'];
 
-  String spaceName(String s) =>
-      pref('space_${s}_name', s == 'work' ? 'Werk' : 'Privé') as String;
+  /// Omgevingen waarin je zelf losse notities zet.
+  static const looseSpaces = ['work', 'private'];
 
-  int spaceColor(String s) =>
-      (pref('space_${s}_color', s == 'work' ? 0xFFEF9F27 : 0xFF5B9BE6) as num)
+  String spaceName(String s) => pref('space_${s}_name',
+      switch (s) { 'work' => 'Werk', 'private' => 'Privé', _ => 'Klussen' })
+      as String;
+
+  int spaceColor(String s) => (pref('space_${s}_color', switch (s) {
+        'work' => 0xFFEF9F27,
+        'private' => 0xFF5B9BE6,
+        _ => 0xFF3DBFB8,
+      }) as num)
           .toInt();
 
   /// Pincode voor Privé: alleen op dit apparaat bewaard, niet gesynchroniseerd.

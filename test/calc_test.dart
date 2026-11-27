@@ -194,7 +194,7 @@ void main() {
     expect(deltaToPlain(wifi.content), 'Wifi zaal 3: geheim');
   });
 
-  test('klusnotities horen altijd bij Werk', () {
+  test('klusnotities horen altijd bij Klussen', () {
     final m = Note(
             id: '1',
             text: '',
@@ -203,7 +203,7 @@ void main() {
             jobKey: 'a|1',
             space: 'private')
         .toMap();
-    expect(Note.fromMap(m).space, 'work');
+    expect(Note.fromMap(m).space, 'jobs');
     final loose = Note(
         id: '2',
         text: '',
@@ -233,5 +233,65 @@ void main() {
         'Lijst\n☐ A\n☐ C');
     // Heen en terug zonder wijziging blijft gelijk.
     expect(deltaToPlain(jsonEncode(joinLines(linesOf(d)))), deltaToPlain(d));
+  });
+
+  test('Google-agenda: herhalingen, uitzonderingen en herinneringen', () {
+    const ics = 'BEGIN:VCALENDAR\n'
+        'BEGIN:VEVENT\n'
+        'UID:sport\n'
+        'SUMMARY:Sport\n'
+        'DTSTART;TZID=Europe/Amsterdam:20261103T190000\n'
+        'DTEND;TZID=Europe/Amsterdam:20261103T200000\n'
+        'RRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=6\n'
+        'EXDATE;TZID=Europe/Amsterdam:20261105T190000\n'
+        'BEGIN:VALARM\n'
+        'DESCRIPTION:Herinnering\n'
+        'TRIGGER:-PT10M\n'
+        'END:VALARM\n'
+        'DESCRIPTION:Hal 2\n'
+        'END:VEVENT\n'
+        'BEGIN:VEVENT\n'
+        'UID:sport\n'
+        'RECURRENCE-ID;TZID=Europe/Amsterdam:20261110T190000\n'
+        'SUMMARY:Sport (later)\n'
+        'DTSTART;TZID=Europe/Amsterdam:20261110T203000\n'
+        'DTEND;TZID=Europe/Amsterdam:20261110T213000\n'
+        'END:VEVENT\n'
+        'BEGIN:VEVENT\n'
+        'UID:sport\n'
+        'RECURRENCE-ID;TZID=Europe/Amsterdam:20261112T190000\n'
+        'STATUS:CANCELLED\n'
+        'DTSTART;TZID=Europe/Amsterdam:20261112T190000\n'
+        'END:VEVENT\n'
+        'BEGIN:VEVENT\n'
+        'UID:borrel\n'
+        'SUMMARY:Borrel\n'
+        'DTSTART:20261127T160000Z\n'
+        'DURATION:PT2H\n'
+        'END:VEVENT\n'
+        'END:VCALENDAR\n';
+    final e = parseIcal(ics,
+        from: DateTime(2026, 10, 1), to: DateTime(2027, 1, 1));
+    final sport = e.where((x) => x.title.startsWith('Sport')).toList();
+    // 6 keer (3, 5, 10, 12, 17, 19 nov), min uitgezonderd 5 en afgezegd 12.
+    expect(sport.map((x) => x.start.day), [3, 10, 17, 19]);
+    expect(sport[1].title, 'Sport (later)');
+    expect(sport[1].start, DateTime(2026, 11, 10, 20, 30));
+    expect(sport.first.description, 'Hal 2'); // niet die van de herinnering
+    expect(sport.first.end, DateTime(2026, 11, 3, 20));
+    expect(sport.map((x) => x.uid).toSet(), hasLength(4));
+    final borrel = e.firstWhere((x) => x.title == 'Borrel');
+    expect(borrel.uid, 'borrel'); // losse afspraak houdt zijn UID
+    expect(borrel.end.difference(borrel.start), const Duration(hours: 2));
+  });
+
+  test('maandelijks op de laatste vrijdag', () {
+    final d = expandRrule('FREQ=MONTHLY;BYDAY=-1FR;COUNT=3',
+        DateTime(2026, 11, 27, 9), DateTime(2026, 1, 1), DateTime(2028, 1, 1));
+    expect(d, [
+      DateTime(2026, 11, 27, 9),
+      DateTime(2026, 12, 25, 9),
+      DateTime(2027, 1, 29, 9),
+    ]);
   });
 }

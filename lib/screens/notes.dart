@@ -237,6 +237,171 @@ class _NoteEditorState extends State<_NoteEditor> {
     setState(() {});
   }
 
+  // ---------- Checklist-items verslepen ----------
+
+  static bool _isCheckBlock(Block b) {
+    final l = b.style.attributes[Attribute.list.key];
+    return l == Attribute.checked || l == Attribute.unchecked;
+  }
+
+  /// Bij checklists extra ruimte links voor het sleepicoon.
+  static HorizontalSpacing _indentWidth(
+      Block block, BuildContext context, int count, numberPointWidth) {
+    final base = TextBlockUtils.defaultIndentWidthBuilder(
+        block, context, count, numberPointWidth);
+    if (!_isCheckBlock(block)) return base;
+    return HorizontalSpacing(base.left + 22, base.right);
+  }
+
+  /// Regelnummer van de regel die op [offset] begint.
+  int _lineIndexAt(int offset) {
+    final text = _quill.document.toPlainText();
+    return '\n'.allMatches(text.substring(0, offset.clamp(0, text.length))).length;
+  }
+
+  Widget? _leading(Node node, LeadingConfig config) {
+    final a = config.attribute;
+    if (a != Attribute.checked && a != Attribute.unchecked) return null;
+    final line = node as Line;
+    final offset = line.documentOffset;
+    final box = SizedBox(
+      width: 42,
+      child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        Draggable<int>(
+          data: offset,
+          axis: Axis.vertical,
+          feedback: Material(
+            color: _cardColor,
+            elevation: 4,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(line.toPlainText().trim(),
+                  style: const TextStyle(fontSize: 15)),
+            ),
+          ),
+          child: const MouseRegion(
+            cursor: SystemMouseCursors.grab,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+              child: Icon(Icons.drag_indicator, size: 18, color: muted),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        QuillCheckboxPoint(
+          size: config.lineSize ?? 16,
+          value: config.value,
+          enabled: config.enabled ?? true,
+          onChanged: config.onCheckboxTap,
+          uiBuilder: config.uiBuilder,
+        ),
+      ]),
+    );
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => d.data != offset,
+      onAcceptWithDetails: (d) => _moveLine(_lineIndexAt(d.data), _lineIndexAt(offset)),
+      builder: (c, cand, _) => Container(
+        decoration: cand.isEmpty
+            ? null
+            : BoxDecoration(
+                border: Border(
+                    top: BorderSide(
+                        color: Theme.of(c).colorScheme.primary, width: 2))),
+        child: box,
+      ),
+    );
+  }
+
+  /// Regel [from] naar de plek van regel [to].
+  void _moveLine(int from, int to) {
+    final lines = splitLines(_docOps);
+    if (from < 0 || from >= lines.length || to < 0 || to >= lines.length) {
+      return;
+    }
+    final l = lines.removeAt(from);
+    lines.insert(to.clamp(0, lines.length), l);
+    _setDoc(joinLines(lines));
+    setState(() {});
+  }
+
+  /// Opsommingen, genummerde lijsten en tekstregels in een lijst ordenen.
+  Future<void> _orderItems() async {
+    final lines = splitLines(_docOps);
+    // De laatste lege regel hoort er altijd te staan; die niet tonen.
+    final trailing = lines.isNotEmpty && lines.last.plain.trim().isEmpty
+        ? lines.removeLast()
+        : null;
+    if (lines.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Er is niets om te ordenen.')));
+      return;
+    }
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (c) => StatefulBuilder(builder: (c, setS) {
+        String prefix(NoteLine l, int i) => switch (l.list) {
+              'bullet' => '•  ',
+              'ordered' => '${lines.take(i + 1).where((x) => x.list == 'ordered').length}.  ',
+              'unchecked' => '☐  ',
+              _ => '',
+            };
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.sizeOf(c).height * 0.8),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text('Items ordenen',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+              ),
+              Flexible(
+                child: ReorderableListView(
+                  shrinkWrap: true,
+                  buildDefaultDragHandles: false,
+                  onReorder: (o, n) => setS(() {
+                    if (n > o) n--;
+                    lines.insert(n, lines.removeAt(o));
+                  }),
+                  children: [
+                    for (var i = 0; i < lines.length; i++)
+                      ListTile(
+                        key: ValueKey(lines[i]),
+                        dense: true,
+                        title: Text('${prefix(lines[i], i)}${lines[i].plain}',
+                            maxLines: 2, overflow: TextOverflow.ellipsis),
+                        trailing: ReorderableDragStartListener(
+                          index: i,
+                          child: const Icon(Icons.drag_handle),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c, false),
+                      child: const Text('Annuleren')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(c, true),
+                      child: const Text('Klaar')),
+                ]),
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+    if (ok != true || !mounted) return;
+    _setDoc(joinLines([...lines, if (trailing != null) trailing]));
+    setState(() {});
+  }
+
   void _deleteChecked() {
     final removed = List.of(_checked);
     setState(_checked.clear);
@@ -285,7 +450,7 @@ class _NoteEditorState extends State<_NoteEditor> {
     n.text = plain;
     n.jobKey = _jobKey;
     n.jobTitle = store.job(_jobKey)?.title;
-    n.space = _jobKey != null ? 'work' : _space;
+    n.space = _jobKey != null ? 'jobs' : (_space == 'jobs' ? 'work' : _space);
     n.lockscreen = _lock;
     n.pinned = _pinned && !_archived;
     n.archived = _archived;
@@ -384,7 +549,7 @@ class _NoteEditorState extends State<_NoteEditor> {
                 ],
                 onChanged: (v) => both(() {
                   _jobKey = v;
-                  if (v != null) _space = 'work';
+                  _space = v != null ? 'jobs' : (_space == 'jobs' ? 'work' : _space);
                 }),
               ),
               const SizedBox(height: 8),
@@ -394,7 +559,7 @@ class _NoteEditorState extends State<_NoteEditor> {
                   const Spacer(),
                   SegmentedButton<String>(
                     segments: [
-                      for (final s in Store.spaces)
+                      for (final s in Store.looseSpaces)
                         ButtonSegment(value: s, label: Text(store.spaceName(s))),
                     ],
                     selected: {_space},
@@ -402,7 +567,7 @@ class _NoteEditorState extends State<_NoteEditor> {
                   ),
                 ])
               else
-                Text('Klusnotities staan altijd in ${store.spaceName('work')}.',
+                Text('Klusnotities staan altijd in ${store.spaceName('jobs')}.',
                     style: const TextStyle(color: muted, fontSize: 12)),
               if (device.supported)
                 SwitchListTile(
@@ -413,6 +578,16 @@ class _NoteEditorState extends State<_NoteEditor> {
                   value: _widget,
                   onChanged: (v) => both(() => _widget = v),
                 ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.swap_vert),
+                title: const Text('Items ordenen'),
+                subtitle: const Text('Voor opsommingen en genummerde lijsten'),
+                onTap: () {
+                  Navigator.pop(c);
+                  _orderItems();
+                },
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.share_outlined),
@@ -484,7 +659,7 @@ class _NoteEditorState extends State<_NoteEditor> {
 
   Future<void> _editTags() async {
     final r = await pickTags(context,
-        selected: _tags.toSet(), space: _jobKey != null ? 'work' : _space);
+        selected: _tags.toSet(), space: _jobKey != null ? 'jobs' : _space);
     if (r != null) {
       setState(() => _tags
         ..clear()
@@ -573,19 +748,26 @@ class _NoteEditorState extends State<_NoteEditor> {
                     border: InputBorder.none,
                   ),
                 ),
-                QuillEditor(
+                Builder(builder: (context) => QuillEditor(
                   controller: _quill,
                   focusNode: _focus,
                   scrollController: ScrollController(),
                   config: QuillEditorConfig(
-                    placeholder: 'Notitie',
+                    // Checklist: sleepicoon + vinkje vóór elk item (zoals Keep).
+                    customStyles: DefaultStyles(
+                      lists: DefaultStyles.getInstance(context)
+                          .lists!
+                          .copyWith(indentWidthBuilder: _indentWidth),
+                    ),
+                    // ignore: experimental_member_use
+                    customLeadingBlockBuilder: _leading,
                     autoFocus: widget.note == null && !widget.photo,
                     scrollable: false,
                     expands: false,
                     padding: EdgeInsets.zero,
                     minHeight: 160,
                   ),
-                ),
+                )),
                 if (_checked.isNotEmpty) ...[
                   const Divider(color: _line, height: 20),
                   InkWell(
@@ -979,7 +1161,9 @@ class _NotesScreenState extends State<NotesScreen> {
 
   bool get _selecting => _selected.isNotEmpty;
   bool get _needsPin =>
-      _space != 'work' && store.privatePin != null && !privateUnlocked;
+      (_space == 'private' || _space == 'all') &&
+      store.privatePin != null &&
+      !privateUnlocked;
 
   @override
   void initState() {
@@ -1001,17 +1185,20 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   Future<void> _setSpace(String s) async {
-    if (s != 'work' && !await unlockPrivate(context)) return;
+    if ((s == 'private' || s == 'all') && !await unlockPrivate(context)) {
+      return;
+    }
     await store.setNotesSpace(s);
     setState(() {
       _space = s;
       _selected.clear();
-      if (_view.startsWith('#')) _view = 'notes';
+      if (_view != 'archive' && _view != 'trash') _view = 'notes';
     });
   }
 
   /// Omgeving voor nieuwe notities.
-  String get _newSpace => _space == 'all' ? 'work' : _space;
+  String get _newSpace =>
+      Store.looseSpaces.contains(_space) ? _space : 'work';
 
   bool _inSpace(Note n) => _space == 'all' || n.space == _space;
 
@@ -1258,7 +1445,11 @@ class _NotesScreenState extends State<NotesScreen> {
         onDropTag: _dropOnTag,
       );
       final canCreate =
-          !_needsPin && _view != 'trash' && _view != 'archive' && !_selecting;
+          !_needsPin &&
+          _view != 'trash' &&
+          _view != 'archive' &&
+          !_selecting &&
+          _space != 'jobs'; // klusnotities maak je bij de klus
       return Scaffold(
         key: _scaffold,
         drawer: wide ? null : Drawer(backgroundColor: _cardColor, child: menu),
@@ -1499,7 +1690,8 @@ class _NotesScreenState extends State<NotesScreen> {
               customBorder: const CircleBorder(),
               onTap: () => _setSpace(switch (_space) {
                 'work' => 'private',
-                'private' => 'all',
+                'private' => 'jobs',
+                'jobs' => 'all',
                 _ => 'work',
               }),
               child: CircleAvatar(
@@ -1679,11 +1871,11 @@ class _Menu extends StatelessWidget {
           ]),
         ),
         item(Icons.lightbulb_outline, 'Notities', 'notes'),
-        if (space != 'private') ...[
+        if (space == 'jobs' || space == 'all') ...[
           item(Icons.event_note_outlined, 'Bij klussen', 'jobs'),
           item(Icons.history, 'Afgelopen klussen', 'past'),
         ],
-        item(Icons.notes, 'Losse notities', 'loose'),
+        if (space == 'all') item(Icons.notes, 'Losse notities', 'loose'),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
           child: Row(children: [

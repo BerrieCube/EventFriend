@@ -190,7 +190,10 @@ class ClientLabel extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: Theme.of(context).colorScheme.primary,
+          // Persoonlijke agenda: rustig grijs, geen opdrachtgever.
+          color: store.isPersonal(job)
+              ? muted
+              : Theme.of(context).colorScheme.primary,
           fontSize: size,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.3,

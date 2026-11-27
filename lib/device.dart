@@ -12,6 +12,7 @@ import 'package:timezone/data/latest_10y.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'format.dart';
+import 'note_text.dart';
 import 'store.dart';
 
 class DeviceIntegration {
@@ -88,7 +89,7 @@ class DeviceIntegration {
       await _notifications.show(
         id: id,
         title: title,
-        body: n.text,
+        body: withoutChecked(n.text),
         payload: 'note:${n.id}',
         notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
@@ -106,7 +107,7 @@ class DeviceIntegration {
             enableVibration: false,
             visibility: NotificationVisibility.public,
             category: AndroidNotificationCategory.reminder,
-            styleInformation: BigTextStyleInformation(n.text,
+            styleInformation: BigTextStyleInformation(withoutChecked(n.text),
                 contentTitle: title),
           ),
         ),
@@ -201,7 +202,7 @@ class DeviceIntegration {
                   : (note.jobTitle ?? 'Notitie')));
       await HomeWidget.saveWidgetData<String>(
           'note_text',
-          note?.text ??
+          (note == null ? null : withoutChecked(note.text)) ??
               'Open een notitie in EventFriend en zet "Op widget" aan.');
       await HomeWidget.updateWidget(
           qualifiedAndroidName: 'nl.eventfriend.eventfriend.NoteWidget');

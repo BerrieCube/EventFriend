@@ -22,6 +22,7 @@ class _CalendarDialog extends StatefulWidget {
 class _CalendarDialogState extends State<_CalendarDialog> {
   late final _name = TextEditingController(text: widget.edit?.name ?? '');
   late final _url = TextEditingController(text: widget.edit?.url ?? '');
+  late bool _personal = widget.edit?.personal ?? false;
   String? _error;
   bool _busy = false;
 
@@ -45,10 +46,11 @@ class _CalendarDialogState extends State<_CalendarDialog> {
     });
     final e = widget.edit;
     if (e == null) {
-      await store.addCalendar(name, url);
+      await store.addCalendar(name, url, personal: _personal);
     } else {
       e.name = name;
       e.url = url;
+      e.personal = _personal;
       await store.updateCalendar(e);
       await store.syncCalendar(e);
     }
@@ -61,6 +63,27 @@ class _CalendarDialogState extends State<_CalendarDialog> {
       title: Text(widget.edit == null ? 'Agenda toevoegen' : 'Agenda wijzigen'),
       content: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.business_center_outlined),
+                  label: Text('Opdrachtgever')),
+              ButtonSegment(
+                  value: true,
+                  icon: Icon(Icons.person_outline),
+                  label: Text('Persoonlijk')),
+            ],
+            selected: {_personal},
+            onSelectionChanged: (v) => setState(() => _personal = v.first),
+          ),
+          const SizedBox(height: 4),
+          Text(
+              _personal
+                  ? 'Afspraken zie je in je planning, maar ze tellen niet mee voor facturen.'
+                  : 'Klussen tellen mee in Te verwerken en het overzicht voor je facturen.',
+              style: const TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(height: 12),
           TextField(
             controller: _name,
             decoration: const InputDecoration(
@@ -71,17 +94,21 @@ class _CalendarDialogState extends State<_CalendarDialog> {
           TextField(
             controller: _url,
             decoration: const InputDecoration(
-                labelText: 'iCal-link uit Rentman',
+                labelText: 'iCal-link (Rentman of Google Agenda)',
                 hintText: 'https://…/ical/…'),
             keyboardType: TextInputType.url,
             maxLines: 3,
             minLines: 1,
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Je vindt de link in Rentman bij je profiel of agenda, onder '
-            'agenda-synchronisatie. Per opdrachtgever voeg je een eigen agenda toe.',
-            style: TextStyle(color: muted, fontSize: 12),
+          Text(
+            _personal
+                ? 'Google Agenda: op een computer ⚙ Instellingen → kies de agenda → '
+                    '"Agenda integreren" → "Geheim adres in iCal-indeling". '
+                    'Deel die link met niemand.'
+                : 'Rentman: bij je profiel of agenda, onder agenda-synchronisatie. '
+                    'Per opdrachtgever voeg je een eigen agenda toe.',
+            style: const TextStyle(color: muted, fontSize: 12),
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),
@@ -114,7 +141,7 @@ class CalendarsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Rentman-agenda\'s'), actions: [
+      appBar: AppBar(title: const Text('Agenda\'s'), actions: [
         StoreBuilder(
             builder: (_) => IconButton(
                 tooltip: 'Alles verversen',
@@ -132,7 +159,7 @@ class CalendarsScreen extends StatelessWidget {
           return const Center(
             child: EmptyHint(
               icon: Icons.event_available_outlined,
-              title: 'Koppel je eerste Rentman-agenda',
+              title: 'Koppel je eerste agenda',
               body:
                   'Plak de iCal-link die je als crewlid van een opdrachtgever krijgt. '
                   'Je kunt er zoveel toevoegen als je wilt.',
@@ -156,7 +183,9 @@ class CalendarsScreen extends StatelessWidget {
                         : Theme.of(context).colorScheme.error),
                 title: Text(c.name,
                     style: TextStyle(color: c.enabled ? null : muted)),
-                subtitle: Text(!c.enabled
+                subtitle: Text(c.personal && c.enabled && c.error == null
+                    ? 'Persoonlijk · $count afspraken · telt niet mee voor facturen'
+                    : !c.enabled
                     ? 'Uit: verborgen in je planning; afgelopen klussen blijven in Te verwerken en het overzicht'
                     : c.error ??
                     (c.lastSync == null

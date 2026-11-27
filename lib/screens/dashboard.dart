@@ -164,7 +164,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final q = ctrl.text.trim().toLowerCase();
         final notes = store.notes
             .where((n) =>
-                (n.space == 'work' || store.privatePin == null || privateUnlocked) &&
+                (n.space != 'private' || store.privatePin == null || privateUnlocked) &&
                 (q.isEmpty ||
                     n.title.toLowerCase().contains(q) ||
                     n.text.toLowerCase().contains(q)))
@@ -417,7 +417,11 @@ class _Block extends StatelessWidget {
             label: 'Vandaag', job: jobs.firstOrNull, empty: 'Geen klus vandaag',
             more: jobs.length - 1);
       case 'next':
-        final j = store.planningJobs.where((j) => j.start.isAfter(now)).firstOrNull;
+        // Eerste klus op een volgende dag (vandaag staat in 'Klus vandaag').
+        final tomorrowStart = DateTime(now.year, now.month, now.day + 1);
+        final j = store.planningJobs
+            .where((j) => !j.start.isBefore(tomorrowStart))
+            .firstOrNull;
         return _JobBlock(
             label: j == null ? 'Volgende klus' : 'Volgende · ${dateShort(j.start)}',
             job: j,
@@ -758,7 +762,7 @@ class _NoteBlock extends StatelessWidget {
     if (n == null || n.trashed != null) {
       return const _Missing('Notitie bestaat niet meer');
     }
-    if (n.space != 'work' && store.privatePin != null && !privateUnlocked) {
+    if (n.space == 'private' && store.privatePin != null && !privateUnlocked) {
       return Card(
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -861,9 +865,11 @@ class _QuickNoteBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final space = store.notesSpace == 'all' ? 'work' : store.notesSpace;
+    final space = Store.looseSpaces.contains(store.notesSpace)
+        ? store.notesSpace
+        : 'work';
     void go({bool checklist = false, bool photo = false}) async {
-      if (space != 'work' && !await unlockPrivate(context)) return;
+      if (space == 'private' && !await unlockPrivate(context)) return;
       if (!context.mounted) return;
       editNote(context, space: space, checklist: checklist, photo: photo);
     }

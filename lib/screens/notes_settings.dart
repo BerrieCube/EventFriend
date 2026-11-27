@@ -30,12 +30,13 @@ class NotesSettingsScreen extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text(
-                'Je hebt twee gescheiden omgevingen voor notities, elk met eigen '
-                'labels, archief en prullenbak. Klusnotities staan altijd in de eerste.',
+            Text(
+                'Je notities staan in drie gescheiden omgevingen, elk met eigen '
+                'labels, archief en prullenbak. Notities bij een klus komen '
+                'automatisch in ${store.spaceName('jobs')}.',
                 style: TextStyle(color: muted)),
             const SectionTitle('Omgevingen'),
-            for (final s in Store.spaces)
+            for (final s in Store.looseSpaces)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Card(
@@ -45,9 +46,10 @@ class NotesSettingsScreen extends StatelessWidget {
                       backgroundColor: spaceColor(s),
                     ),
                     title: Text(store.spaceName(s)),
-                    subtitle: Text(s == 'work'
-                        ? 'Ook voor notities bij klussen'
-                        : 'Alleen losse notities'),
+                    subtitle: Text(switch (s) {
+                      'jobs' => 'Automatisch: alle notities bij een klus',
+                      _ => 'Losse notities',
+                    }),
                     trailing: const Icon(Icons.edit_outlined),
                     onTap: () => _editSpace(context, s),
                   ),

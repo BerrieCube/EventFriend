@@ -42,7 +42,7 @@ class _JobsScreenState extends State<JobsScreen> {
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(
-                    value: 'cal', child: Text('Rentman-agenda toevoegen')),
+                    value: 'cal', child: Text('Agenda toevoegen (Rentman/Google)')),
                 PopupMenuItem(
                     value: 'job', child: Text('Eigen klus toevoegen')),
               ],
